@@ -1,0 +1,36 @@
+ARTIFACT_TYPE=IMPLEMENTATION_VERIFICATION
+TASK=COMPLETE_AND_VERIFY_DIR_DRAFT_GENERATION
+EXECUTOR=Cursor
+DATE=2026-11-02
+DESIGN_AUTHORITY=DIR_DRAFT.md §2.2 §5.2
+VERDICT=PASS
+
+SCOPE=
+Customer-approved Design Summary → persistent DIR AI_DRAFT (deterministic, no external AI spend).
+Six §2.2 fields from customer_confirmed only; ai_proposed excluded from DIR body.
+Lifecycle transition to dir on first successful generation; idempotent retry preserves created_at.
+
+BUILD_FAILURE_ROOT_CAUSE=
+next build prerendered pages with ClerkProvider while NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY was empty
+(.env.local has ENABLE_DEV_AUTH=1 but dev auth was development-only). Clerk threw on /_not-found.
+
+BUILD_FIX=
+lib/dev-auth.ts: isClerkConfigured(), shouldUseClerk() — skip ClerkProvider/middleware and
+Clerk UI when publishable key absent (local dev + CI/build). Sign-in/home pages guard Clerk components.
+
+MIGRATION=
+db/migrations/003_dir_drafts.sql applied via npm run db:migrate on test Postgres (127.0.0.1:54333).
+
+VERIFIED_EVIDENCE=
+npm run build: PASS (static + dynamic routes)
+npm run verify:dir: PASS — 12 unit/API tests + 1 PostgreSQL RLS/persistence integration test
+npx tsc --noEmit: run with build typecheck (included in next build)
+
+INTEGRATION_COVERAGE=
+Approval gate before insert; confirmed-only mapping; retry identity; lifecycle_stage=dir;
+cross-tenant read/write denial under non-BYPASSRLS role (dir-persistence.test.ts).
+
+NOT_VERIFIED_HERE=
+Clerk production keys browser E2E; Neon production deploy; NWS canonical mutation (none performed).
+
+K_VERIFIED_STATE=NOT_ASSERTED_SAAS_PACKAGE_ONLY

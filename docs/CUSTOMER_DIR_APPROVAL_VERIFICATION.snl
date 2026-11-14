@@ -1,0 +1,11 @@
+ARTIFACT_TYPE=IMPLEMENTATION_VERIFICATION
+TASK=IMPLEMENT_AND_VERIFY_CUSTOMER_DIR_APPROVAL
+DATE=2026-11-02
+DESIGN_AUTHORITY=DIR_DRAFT.md sections 3, 5.2, 7.2
+TASK_STATUS=PARTIAL
+IMPLEMENTED=Explicit review checkbox and approval action; authenticated ownership-checked approval endpoint; reviewed-content equality gate; approval actor and timestamp; atomic DIR approval and agile_bdd stage transition; idempotent approval evidence; approved state display; migration 004; approval API tests and PostgreSQL scenarios.
+VERIFIED=npm test: exit 0, 32 passed, 1 PostgreSQL test skipped; npm run build: exit 0, compilation, lint and type checks completed; npm run verify:dir: 21 unit/API tests passed.
+NOT_VERIFIED=Migration execution, PostgreSQL persistence/RLS and lifecycle transition scenarios, live browser workflow.
+FAILURE_CAUSE=npm run verify:dir exited 1: connect EPERM 127.0.0.1:54333; sandbox denies configured database connection before fixture execution.
+NEXT_REQUIRED_ACTION=Run npm run verify:dir with access to an isolated PostgreSQL database; apply migrations to the application database before use.
+BOUNDARY=DIR approval permits Agile/BDD planning only; no implementation, release, spend or canonical NWS/GAS authorization granted; no downstream artifact generation added.

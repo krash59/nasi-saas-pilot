@@ -1,0 +1,17 @@
+import {beforeEach,afterEach,it,expect,vi} from 'vitest';
+const m=vi.hoisted(()=>({verify:vi.fn(),fetch:vi.fn()}));
+vi.mock('@clerk/backend',()=>({verifyToken:m.verify}));
+import {authenticatePilotBearer} from '@/lib/providers/clerk-pilot';
+const active=()=>new Response(JSON.stringify({status:'active',user_id:'user_fixture'}),{status:200});
+beforeEach(()=>{vi.resetAllMocks();vi.stubEnv('NASI_PROVIDER_MODE','synthetic-pilot');vi.stubEnv('CLERK_SECRET_KEY','sk_test_synthetic_fixture');vi.stubGlobal('fetch',m.fetch);m.verify.mockResolvedValue({sub:'user_fixture',sid:'sess_fixture'});m.fetch.mockImplementation(async()=>active());});
+afterEach(()=>{vi.unstubAllEnvs();vi.unstubAllGlobals();});
+it('requires a signed token and current matching active session with no cached or redirected authority',async()=>{expect(await authenticatePilotBearer('Bearer synthetic-token')).toBe('user_fixture');expect(m.fetch).toHaveBeenCalledWith('https://api.clerk.com/v1/sessions/sess_fixture',expect.objectContaining({redirect:'error',cache:'no-store'}));});
+it.each(['revoked','expired','abandoned'])('denies %s sessions without retrying',async status=>{m.fetch.mockResolvedValue(new Response(JSON.stringify({status,user_id:'user_fixture'})));await expect(authenticatePilotBearer('Bearer synthetic-token')).rejects.toThrow('UNAUTHENTICATED');expect(m.fetch).toHaveBeenCalledTimes(1);});
+it('denies cross-user session claims',async()=>{m.fetch.mockResolvedValue(new Response(JSON.stringify({status:'active',user_id:'user_other'})));await expect(authenticatePilotBearer('Bearer synthetic-token')).rejects.toThrow('UNAUTHENTICATED');});
+it('rejects expired or tampered JWTs before session lookup',async()=>{m.verify.mockRejectedValue(new Error('signature or expiry rejected'));await expect(authenticatePilotBearer('Bearer synthetic-token')).rejects.toThrow('UNAUTHENTICATED');expect(m.fetch).not.toHaveBeenCalled();});
+it('fails closed on unknown transport failures',async()=>{m.fetch.mockRejectedValue(new Error('private_detail'));await expect(authenticatePilotBearer('Bearer synthetic-token')).rejects.toThrow('UNAUTHENTICATED');expect(m.fetch).toHaveBeenCalledTimes(1);});
+it('retries a temporary provider read failure and still requires current identity',async()=>{m.fetch.mockResolvedValueOnce(new Response('',{status:503}));expect(await authenticatePilotBearer('Bearer synthetic-token')).toBe('user_fixture');expect(m.fetch).toHaveBeenCalledTimes(2);});
+it('bounds repeated transient transport failures to three reads',async()=>{m.fetch.mockRejectedValue(Object.assign(new Error('private transport failure'),{cause:{code:'ETIMEDOUT'}}));await expect(authenticatePilotBearer('Bearer synthetic-token')).rejects.toThrow('UNAUTHENTICATED');expect(m.fetch).toHaveBeenCalledTimes(3);});
+it.each([401,403,404])('does not retry provider authorization denial %s',async status=>{m.fetch.mockResolvedValue(new Response('',{status}));await expect(authenticatePilotBearer('Bearer synthetic-token')).rejects.toThrow('UNAUTHENTICATED');expect(m.fetch).toHaveBeenCalledTimes(1);});
+it.each(['','Basic synthetic','Bearer one two'])('denies malformed credentials %s',async value=>{await expect(authenticatePilotBearer(value)).rejects.toThrow('UNAUTHENTICATED');expect(m.verify).not.toHaveBeenCalled();});
+it('does not enable the pilot path with production credentials',async()=>{vi.stubEnv('CLERK_SECRET_KEY','sk_live_synthetic_fixture');await expect(authenticatePilotBearer('Bearer synthetic-token')).rejects.toThrow('UNAUTHENTICATED');expect(m.fetch).not.toHaveBeenCalled();});
