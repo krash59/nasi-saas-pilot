@@ -15,6 +15,7 @@ const UUID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
 const HITL: [RegExp, string[]][] = [
   [new RegExp(`^/api/projects/${UUID}/design/summary$`, "i"), ["POST", "PUT", "DELETE"]], // confirm/approve summary, authorize/end implementation
   [new RegExp(`^/api/projects/${UUID}/dir/approve$`, "i"), ["POST"]],                     // approve DIR
+  [new RegExp(`^/api/projects/${UUID}/stories$`, "i"), ["POST"]],                         // accept story set (-> kanban)
   [new RegExp(`^/api/projects/${UUID}/release-authorization$`, "i"), ["POST"]],           // ACT_05A
   [/^\/api\/account\/offboard$/i, ["POST"]],                                                // account closure
 ];

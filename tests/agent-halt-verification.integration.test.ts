@@ -42,6 +42,8 @@ describe.skipIf(!url)('Agent HALT and verification packages (real PostgreSQL, se
   await admin.query("INSERT INTO projects(id,customer_id,name) VALUES($1,$2,'a'),($3,$4,'b')",[P,A,Q,B]);
   await admin.query(`INSERT INTO dir_drafts(project_id,customer_id,status,content,source_summary,source_approved_at,generated_by,approved_at,approved_by)
    VALUES($1,$2,'approved','{"v":1}','{}',now(),'test_a',now(),'test_a')`,[P,A]);
+  await admin.query(`INSERT INTO story_sets(project_id,customer_id,dir_sha256,stories,status,accepted_at,accepted_by)
+   SELECT project_id,customer_id,encode(digest(content::text,'sha256'),'hex'),'[{"id":"ST01"}]','accepted',now(),approved_by FROM dir_drafts`); // BDD_F07_01 fixture: story set accepted (migration 015)
   consent=(await admin.query(`INSERT INTO implementation_consents(project_id,customer_id,dir_sha256,approved_by)
    SELECT project_id,customer_id,encode(digest(content::text,'sha256'),'hex'),approved_by FROM dir_drafts WHERE project_id=$1 RETURNING id`,[P])).rows[0].id;
  });
@@ -182,7 +184,7 @@ describe.skipIf(!url)('Agent HALT and verification packages (real PostgreSQL, se
    expect(await releaseAuthority(urls.orch,['credential',P,R])).toEqual({denied:'VERIFICATION_FAILED'});
   });
   it('a later failing package or a sticky halt voids an issued credential at redemption',async()=>{
-   await approveBoth();await as('agent','package',P,consent,R,checks());
+   await approveBoth();await as('agent','package',P,consent,R,checks());await as('orch','staging',P,R);
    const t1=await releaseAuthority(urls.orch,['credential',P,R]);expect(t1.token).toBeTruthy();
    await as('agent','package',P,consent,R,checks('fail'));
    expect(await releaseAuthority(urls.orch,['redeem',t1.token])).toEqual({denied:'VERIFICATION_NO_LONGER_VALID'});

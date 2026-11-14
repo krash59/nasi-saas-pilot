@@ -112,6 +112,7 @@ export async function PUT(req: Request, ctx: Ctx) {
     if (message === "UNAUTHENTICATED") return NextResponse.json({ error: message }, { status: 401 });
     if (message === "APPROVED_DIR_REVIEW_MISMATCH") return NextResponse.json({ error: message }, { status: 409 });
     if (message === "IMPLEMENTATION_WIP_LIMIT_REACHED") return NextResponse.json({ error: message }, { status: 409 });
+    if (message === "STORY_SET_NOT_ACCEPTED") return NextResponse.json({ error: message }, { status: 409 });
     return NextResponse.json({ error: "IMPLEMENTATION_CONSENT_FAILED" }, { status: 500 });
   }
 }

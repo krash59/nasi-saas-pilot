@@ -15,6 +15,9 @@ export async function authorizeImplementation(projectId: string, reviewedContent
     if (wip.length && Number(wip[0].in_progress) >= Number(wip[0].wip_limit)) {
       throw new Error("IMPLEMENTATION_WIP_LIMIT_REACHED");
     }
+    // BDD_F07_01 (migration 015): the DB refuses consent until the story set for this DIR is accepted.
+    const gate = await tx`SELECT stage_entry_block(${projectId}::uuid, 'kanban') AS why`;
+    if (gate[0]?.why === "STORY_SET_NOT_ACCEPTED") throw new Error("STORY_SET_NOT_ACCEPTED");
     const rows = await tx`WITH eligible AS (
       SELECT d.project_id, d.customer_id, encode(digest(d.content::text, 'sha256'), 'hex') AS dir_sha256
       FROM dir_drafts d JOIN projects p ON p.id = d.project_id

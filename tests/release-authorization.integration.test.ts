@@ -38,6 +38,8 @@ describe.skipIf(!url)('Dual production authorization (real PostgreSQL, separate 
   // BDD_F15_01 (migration 014): production also needs a passed verification package for the release.
   await admin.query(`INSERT INTO verification_packages(project_id,customer_id,release_ref,checks,passed,evidence_sha256,submitted_by)
    VALUES($1,$2,$3,'[{"name":"unit_tests","status":"pass"}]',true,repeat('a',64),'fixture')`,[P,A,R]);
+  // BDD_F07_01 (migration 015): production credentials only for a release promoted to staging.
+  await admin.query("INSERT INTO staging_promotions(project_id,customer_id,release_ref,outcome,reason,requested_by) VALUES($1,$2,$3,'PROMOTED','fixture','fixture')",[P,A,R]);
  });
  afterAll(async()=>{await closePgPools();await admin?.end();if(oldUrl===undefined)delete process.env.DATABASE_URL;else process.env.DATABASE_URL=oldUrl;});
 

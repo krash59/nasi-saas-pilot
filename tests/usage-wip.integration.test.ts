@@ -38,6 +38,8 @@ describe.skipIf(!url)('WIP limit and usage caps (real PostgreSQL, least-privileg
   await admin.query("INSERT INTO customers(id,clerk_user_id) VALUES($1,'test_a'),($2,'test_b')",[A,B]);
   await admin.query("INSERT INTO projects(id,customer_id,name) VALUES($1,$2,'a'),($3,$4,'b')",[P,A,Q,B]);
   await admin.query("INSERT INTO dir_drafts(project_id,customer_id,status,content,source_summary,source_approved_at,generated_by,approved_at,approved_by) VALUES($1,$2,'approved',$3,'{}',now(),'test_a',now(),'test_a')",[P,A,JSON.stringify(content)]);
+  await admin.query(`INSERT INTO story_sets(project_id,customer_id,dir_sha256,stories,status,accepted_at,accepted_by)
+   SELECT project_id,customer_id,encode(digest(content::text,'sha256'),'hex'),'[{"id":"ST01"}]','accepted',now(),approved_by FROM dir_drafts`); // BDD_F07_01 fixture: story set accepted (migration 015)
  });
  afterAll(async()=>{await closePgPools();await app?.end();await admin?.end();if(oldUrl===undefined)delete process.env.DATABASE_URL;else process.env.DATABASE_URL=oldUrl;});
 
