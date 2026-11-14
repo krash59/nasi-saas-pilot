@@ -89,5 +89,10 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
     ttlMinutes: i >= 0 ? Number(rest[i + 1]) : 15, sendEmail: !rest.includes("--no-email"),
   })
     .then(out => { delete out.link; console.log(JSON.stringify(out)); })
-    .catch(e => { console.error(/^[A-Z_]+$/.test(e.message) ? e.message : "INVITE_FAILED"); process.exit(1); });
+    .catch(e => {
+      // Safe diagnostics only: our own codes, or the error class + network code (never messages, URLs or keys).
+      const code = /^[A-Z_]+$/.test(e.message) ? e.message : `INVITE_FAILED:${e?.name ?? "Error"}/${e?.cause?.code ?? e?.code ?? "-"}`;
+      console.error(code.replace(/[^A-Za-z0-9_:/-]/g, ""));
+      process.exit(1);
+    });
 }
