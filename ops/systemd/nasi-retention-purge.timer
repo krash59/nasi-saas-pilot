@@ -1,0 +1,12 @@
+# Daily schedule. OnCalendar + Persistent=true: a run missed while the machine was off
+# happens at next boot (an OnUnitActiveSec-only timer would not restart after reboot).
+[Unit]
+Description=Daily NASI retention purge
+
+[Timer]
+OnCalendar=*-*-* 03:30:00 UTC
+Persistent=true
+RandomizedDelaySec=10m
+
+[Install]
+WantedBy=timers.target

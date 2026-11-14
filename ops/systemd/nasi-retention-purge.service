@@ -1,0 +1,11 @@
+# BDD_F11_02 retention purge (one run). Template: set WorkingDirectory to the app checkout.
+# Reads DATABASE_PURGE_URL from .env.local (never printed); output is counts only.
+[Unit]
+Description=NASI retention purge (DIR 9.2)
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/systems/docs/gp1p/nws_gas_saas_implementation_v1/saas_app
+ExecStart=/usr/bin/node --env-file=.env.local scripts/retention-purge.mjs
+NoNewPrivileges=yes
+PrivateTmp=yes

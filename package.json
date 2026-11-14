@@ -16,7 +16,8 @@
     "verify:wave1": "node scripts/wave1-verify.mjs",
     "verify:design": "node scripts/verify-design-discussion.mjs",
     "verify:dir": "node scripts/verify-dir.mjs",
-    "verify:role": "node scripts/verify-app-role.mjs"
+    "verify:role": "node scripts/verify-app-role.mjs",
+    "purge:retention": "node --env-file=.env.local scripts/retention-purge.mjs"
   },
   "dependencies": {
     "@clerk/nextjs": "^6.12.0",
