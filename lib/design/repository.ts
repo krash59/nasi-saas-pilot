@@ -10,6 +10,7 @@ import { canAccessProject } from "@/lib/tenant/access";
 import type { FieldProposals } from "@/lib/design/summary-extract";
 import { WELCOME_MESSAGE } from "@/lib/design/scaffolding";
 import { applyAiProposals } from "@/lib/design/merge-proposals";
+import { recordSecurityEvent } from "@/lib/security/audit";
 
 async function projectOwnedByCustomer(projectId: string, customerId: string) {
   const sql = getSql(process.env.DATABASE_URL!);
@@ -17,9 +18,13 @@ async function projectOwnedByCustomer(projectId: string, customerId: string) {
     const rows = await tx`
       SELECT id, customer_id, lifecycle_stage FROM projects WHERE id = ${projectId}::uuid
     `;
-    if (rows.length === 0) return null;
-    const row = rows[0] as { id: string; customer_id: string; lifecycle_stage: string };
-    if (!canAccessProject({ customerId, projectCustomerId: row.customer_id })) return null;
+    const row = rows[0] as { id: string; customer_id: string; lifecycle_stage: string } | undefined;
+    if (!row || !canAccessProject({ customerId, projectCustomerId: row.customer_id })) {
+      // RLS hides other tenants' rows, so "missing" and "foreign" look the same here.
+      // Either way the requester was denied: record it (BDD_F05_01).
+      await recordSecurityEvent(tx, customerId, "PROJECT_ACCESS_DENIED", "project", projectId);
+      return null;
+    }
     return row;
   });
 }
