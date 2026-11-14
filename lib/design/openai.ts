@@ -49,6 +49,8 @@ export async function generateDesignAssistantReply(
 
   const res = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
+    redirect: "error",
+    signal: AbortSignal.timeout(30000),
     headers: {
       Authorization: `Bearer ${key}`,
       "Content-Type": "application/json",
