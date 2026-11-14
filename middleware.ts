@@ -2,6 +2,7 @@ import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { isDevAuthEnabled, shouldUseClerk } from "@/lib/dev-auth";
+import { isAgentRequest, isHitlRoute } from "@/lib/security/agent";
 
 // Stripe authenticates the exact raw body with its own webhook signature.
 const isPublicRoute = createRouteMatcher(["/", "/sign-in(.*)", "/api/health", "/api/providers/stripe/webhook"]);
@@ -18,6 +19,11 @@ const clerkHandler = clerkMiddleware(async (auth, req) => {
 }, { jwtKey: process.env.CLERK_JWT_KEY || undefined });
 
 export default function middleware(req: NextRequest, event: unknown) {
+  // BDD_F08_01: agent identities are refused on every HITL approval route, in every auth mode,
+  // before any handler runs (so no approval record can be created).
+  if (isAgentRequest(req.headers) && isHitlRoute(req.method, req.nextUrl.pathname)) {
+    return NextResponse.json({ error: "AGENT_HITL_FORBIDDEN" }, { status: 403 });
+  }
   // Liveness must survive identity-provider outages. The exact webhook route
   // authenticates its raw payload independently and must also accept callbacks
   // without a browser session. Protected product APIs still use Clerk below.

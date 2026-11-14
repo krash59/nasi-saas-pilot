@@ -18,7 +18,8 @@
     "verify:dir": "node scripts/verify-dir.mjs",
     "verify:role": "node scripts/verify-app-role.mjs",
     "purge:retention": "node --env-file=.env.local scripts/retention-purge.mjs",
-    "break-glass": "node scripts/break-glass.mjs"
+    "break-glass": "node scripts/break-glass.mjs",
+    "release-authority": "node scripts/release-authority.mjs"
   },
   "dependencies": {
     "@clerk/nextjs": "^6.12.0",
