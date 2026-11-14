@@ -31,10 +31,13 @@ describe.skipIf(!url)('Dual production authorization (real PostgreSQL, separate 
  });
  beforeEach(async()=>{
   identity.id=A;identity.clerk_user_id='test_a';
-  await admin.query('TRUNCATE production_deploy_decisions,production_deploy_credentials,platform_production_authorizations,customer_release_authorizations,usage_meter_events,dir_drafts,projects,customers CASCADE');
+  await admin.query('TRUNCATE staging_promotions,verification_packages,agent_halts,production_deploy_decisions,production_deploy_credentials,platform_production_authorizations,customer_release_authorizations,usage_meter_events,dir_drafts,projects,customers CASCADE');
   await admin.query("INSERT INTO customers(id,clerk_user_id) VALUES($1,'test_a'),($2,'test_b')",[A,B]);
   await admin.query("INSERT INTO projects(id,customer_id,name) VALUES($1,$2,'a'),($3,$4,'b')",[P,A,Q,B]);
   await admin.query("INSERT INTO dir_drafts(project_id,customer_id,status,content,source_summary,source_approved_at,generated_by,approved_at,approved_by) VALUES($1,$2,'approved','{}','{}',now(),'test_a',now(),'test_a')",[P,A]);
+  // BDD_F15_01 (migration 014): production also needs a passed verification package for the release.
+  await admin.query(`INSERT INTO verification_packages(project_id,customer_id,release_ref,checks,passed,evidence_sha256,submitted_by)
+   VALUES($1,$2,$3,'[{"name":"unit_tests","status":"pass"}]',true,repeat('a',64),'fixture')`,[P,A,R]);
  });
  afterAll(async()=>{await closePgPools();await admin?.end();if(oldUrl===undefined)delete process.env.DATABASE_URL;else process.env.DATABASE_URL=oldUrl;});
 

@@ -25,6 +25,9 @@ export async function exportCustomerData() {
       usage: await tx`SELECT project_id, meter, quantity, source, occurred_at FROM usage_meter_events ORDER BY occurred_at`,
       security_events: await tx`SELECT event_type, resource_type, resource_id, created_at FROM security_audit_events ORDER BY created_at`,
       break_glass: await tx`SELECT id, project_id, engineer, approver, reason, minutes, requested_at, approved_at, expires_at, closed_at FROM break_glass_grants ORDER BY requested_at`,
+      verification_packages: await tx`SELECT id, project_id, release_ref, passed, checks, submitted_by, submitted_at FROM verification_packages ORDER BY submitted_at`,
+      agent_halts: await tx`SELECT id, project_id, trigger, sticky, action, detail, raised_at, cleared_by, cleared_at, clear_reason FROM agent_halts ORDER BY raised_at`,
+      staging_promotions: await tx`SELECT project_id, release_ref, outcome, reason, at FROM staging_promotions ORDER BY at`,
       billing_account: (await tx`SELECT status, stripe_customer_id, stripe_subscription_id FROM pilot_billing_accounts`)[0] ?? null,
       billing_events: await tx`SELECT event_id, event_created, received_at FROM pilot_billing_events ORDER BY event_created`,
     };
