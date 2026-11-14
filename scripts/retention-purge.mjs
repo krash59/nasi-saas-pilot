@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// BDD_F11_02 scheduled retention purge (DIR §9.2, DATA_RETENTION_POLICY_DRAFT RET_D01..D06).
+// BDD_F11_02 scheduled retention purge (DIR §9.2, DATA_RETENTION_POLICY_DRAFT RET_D01..D06; break-glass logs RET_D03).
 // Connects as a LOGIN member of nasi_retention_purge (NOBYPASSRLS). Each tenant is purged in its
 // own transaction under RLS; the job can only enumerate tenant ids, never read across tenants.
 // Usage: DATABASE_PURGE_URL=... node scripts/retention-purge.mjs   (prints counts only, no content)
@@ -8,7 +8,7 @@ import { pathToFileURL } from "node:url";
 
 export async function runRetentionPurge(connectionString) {
   const pool = new pg.Pool({ connectionString, max: 2 });
-  const summary = { customers: 0, archived_projects: 0, security_events: 0, usage_events: 0, accounts_erased: 0 };
+  const summary = { customers: 0, archived_projects: 0, security_events: 0, usage_events: 0, break_glass_events: 0, accounts_erased: 0 };
   try {
     const due = (await pool.query("SELECT retention_due_customers() AS id")).rows.map(r => r.id);
     for (const id of due) {
@@ -20,7 +20,10 @@ export async function runRetentionPurge(connectionString) {
           archived_projects: (await c.query("DELETE FROM projects WHERE status = 'archived' AND archived_at + interval '90 days' <= now()")).rowCount,
           security_events: (await c.query("DELETE FROM security_audit_events WHERE created_at + interval '365 days' <= now()")).rowCount,
           usage_events: (await c.query("DELETE FROM usage_meter_events WHERE occurred_at + interval '24 months' <= now()")).rowCount,
+          break_glass_events: (await c.query("DELETE FROM break_glass_access_log WHERE at + interval '365 days' <= now()")).rowCount,
         };
+        await c.query(`DELETE FROM break_glass_grants g WHERE requested_at + interval '365 days' <= now()
+          AND NOT EXISTS (SELECT 1 FROM break_glass_access_log l WHERE l.grant_id = g.id)`);
         counts.account_erased = (await c.query("SELECT erase_customer_if_window_closed() AS erased")).rows[0].erased === true;
         await c.query("INSERT INTO retention_purge_runs (customer_id, counts) VALUES ($1, $2)", [id, JSON.stringify(counts)]);
         await c.query("COMMIT");
@@ -28,6 +31,7 @@ export async function runRetentionPurge(connectionString) {
         summary.archived_projects += counts.archived_projects;
         summary.security_events += counts.security_events;
         summary.usage_events += counts.usage_events;
+        summary.break_glass_events += counts.break_glass_events;
         summary.accounts_erased += counts.account_erased ? 1 : 0;
       } catch (error) {
         await c.query("ROLLBACK");

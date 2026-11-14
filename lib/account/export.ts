@@ -24,6 +24,7 @@ export async function exportCustomerData() {
       implementation_consents: await tx`SELECT id, project_id, dir_sha256, granted_at, expires_at, revoked_at FROM implementation_consents ORDER BY granted_at`,
       usage: await tx`SELECT project_id, meter, quantity, source, occurred_at FROM usage_meter_events ORDER BY occurred_at`,
       security_events: await tx`SELECT event_type, resource_type, resource_id, created_at FROM security_audit_events ORDER BY created_at`,
+      break_glass: await tx`SELECT id, project_id, engineer, approver, reason, minutes, requested_at, approved_at, expires_at, closed_at FROM break_glass_grants ORDER BY requested_at`,
       billing_account: (await tx`SELECT status, stripe_customer_id, stripe_subscription_id FROM pilot_billing_accounts`)[0] ?? null,
       billing_events: await tx`SELECT event_id, event_created, received_at FROM pilot_billing_events ORDER BY event_created`,
     };

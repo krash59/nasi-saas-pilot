@@ -100,7 +100,7 @@ describe.skipIf(!url)('Export window and retention purge (real PostgreSQL, least
    expect(await q("SELECT customer_id FROM retention_purge_runs WHERE counts->>'account_erased'='true'")).toEqual([{customer_id:A}]);
   });
   it('is a no-op when nothing is due',async()=>{
-   expect(await runRetentionPurge(purgeUrl)).toEqual({customers:0,archived_projects:0,security_events:0,usage_events:0,accounts_erased:0});
+   expect(await runRetentionPurge(purgeUrl)).toEqual({customers:0,archived_projects:0,security_events:0,usage_events:0,break_glass_events:0,accounts_erased:0});
   });
   it('confines the purge role to RLS and the app role away from purge powers',async()=>{
    const p=new Client({connectionString:purgeUrl});await p.connect();
