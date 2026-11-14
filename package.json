@@ -15,7 +15,8 @@
     "verify:clerk": "node scripts/verify-clerk-restricted.mjs",
     "verify:wave1": "node scripts/wave1-verify.mjs",
     "verify:design": "node scripts/verify-design-discussion.mjs",
-    "verify:dir": "node scripts/verify-dir.mjs"
+    "verify:dir": "node scripts/verify-dir.mjs",
+    "verify:role": "node scripts/verify-app-role.mjs"
   },
   "dependencies": {
     "@clerk/nextjs": "^6.12.0",
