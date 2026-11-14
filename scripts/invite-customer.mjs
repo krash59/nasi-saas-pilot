@@ -12,12 +12,28 @@ import { pathToFileURL } from "node:url";
 
 const EMAIL = /^[^\s@]{1,64}@[^\s@]{1,255}\.[a-z]{2,}$/i;
 
+const TRANSIENT = new Set(["ETIMEDOUT", "ECONNRESET", "ECONNREFUSED", "ENETUNREACH", "EAI_AGAIN", "UND_ERR_CONNECT_TIMEOUT", "UND_ERR_HEADERS_TIMEOUT"]);
+/** Up to 3 attempts on network blips or 429/502/503/504. Every call below is safe to repeat (see inviteCustomer). */
+async function withRetry(call) {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      const r = await call();
+      if ([429, 502, 503, 504].includes(r.status) && attempt < 3) { await new Promise(res => setTimeout(res, 400 * attempt)); continue; }
+      return r;
+    } catch (e) {
+      const code = e?.cause?.code ?? e?.code;
+      if (attempt < 3 && (e?.name === "TimeoutError" || TRANSIENT.has(code))) { await new Promise(res => setTimeout(res, 400 * attempt)); continue; }
+      throw e;
+    }
+  }
+}
+
 async function clerk(cfg, method, path, body) {
-  const r = await cfg.fetch("https://api.clerk.com/v1" + path, {
+  const r = await withRetry(() => cfg.fetch("https://api.clerk.com/v1" + path, {
     method, redirect: "error", signal: AbortSignal.timeout(15000),
     headers: { Authorization: "Bearer " + cfg.clerkSecret, "Content-Type": "application/json" },
     body: body === undefined ? undefined : JSON.stringify(body),
-  });
+  }));
   const json = await r.json().catch(() => ({}));
   return { status: r.status, json };
 }
@@ -36,8 +52,10 @@ export async function inviteCustomer({ email, clerkSecret, resendKey, appUrl, tt
   let user = (await clerk(cfg, "GET", "/users?email_address=" + encodeURIComponent(email))).json?.[0];
   if (!user) {
     const made = await clerk(cfg, "POST", "/users", { email_address: [email], skip_password_requirement: true });
-    if (made.status !== 200) throw new Error("USER_PROVISION_FAILED");
-    user = made.json;
+    // A retried create whose first attempt actually landed returns 422 (exists): look the user up again.
+    if (made.status === 422) user = (await clerk(cfg, "GET", "/users?email_address=" + encodeURIComponent(email))).json?.[0];
+    else if (made.status === 200) user = made.json;
+    if (!user?.id) throw new Error("USER_PROVISION_FAILED");
   }
   const tok = await clerk(cfg, "POST", "/sign_in_tokens", { user_id: user.id, expires_in_seconds: ttlMinutes * 60 });
   if (tok.status !== 200 || !tok.json?.token) throw new Error("SIGN_IN_TOKEN_FAILED");
@@ -46,7 +64,8 @@ export async function inviteCustomer({ email, clerkSecret, resendKey, appUrl, tt
   const result = { user_id: user.id, allowlist: allow.status === 200 ? "added" : "already", magic_link_expires_minutes: ttlMinutes, email_id: null };
   if (!sendEmail) return { ...result, link: link.toString() };   // only for callers that deliver it themselves
 
-  const r = await f("https://api.resend.com/emails", {
+  // Safe to retry: Resend de-duplicates on the Idempotency-Key.
+  const r = await withRetry(() => f("https://api.resend.com/emails", {
     method: "POST", redirect: "error", signal: AbortSignal.timeout(15000),
     headers: {
       Authorization: "Bearer " + resendKey, "Content-Type": "application/json",
@@ -56,7 +75,7 @@ export async function inviteCustomer({ email, clerkSecret, resendKey, appUrl, tt
       from: "NASI <onboarding@resend.dev>", to: [email], subject: "Your NASI sign-in link",
       text: `You have been invited to NASI.\n\nSign in (single use, expires in ${ttlMinutes} minutes):\n${link}\n\nIf you did not expect this, ignore this email.`,
     }),
-  });
+  }));
   const sent = await r.json().catch(() => ({}));
   if (!r.ok || !sent.id) throw new Error("EMAIL_SEND_FAILED");
   return { ...result, email_id: sent.id };

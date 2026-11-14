@@ -48,4 +48,21 @@ describe('operator invite (S01_01) and magic link (S01_02)',()=>{
  it('allows plain http only for a loopback app URL (local testing)',async()=>{
   const {f}=provider();await expect(inviteCustomer({...base,appUrl:'http://localhost:3000',fetch:f})).resolves.toBeTruthy();
  });
+ it('retries brief network failures and a lost create response without duplicating anything',async()=>{
+  const {f,calls}=provider();let n=0;
+  const flaky=vi.fn(async(url:string,init:RequestInit)=>{
+   if(url.endsWith('/v1/sign_in_tokens')&&n++===0)throw Object.assign(new TypeError('fetch failed'),{cause:{code:'ETIMEDOUT'}});
+   return f(url,init);});
+  expect(await inviteCustomer({...base,fetch:flaky})).toMatchObject({user_id:'user_1'});
+  expect(calls.filter(c=>c.url.endsWith('/v1/sign_in_tokens'))).toHaveLength(1);
+  const lost=provider({'POST https://api.clerk.com/v1/users':ok({},422)});let looked=0;
+  const after=vi.fn(async(url:string,init:RequestInit)=>url.includes('/v1/users?')&&looked++>0?ok([{id:'user_lost'}]):lost.f(url,init));
+  expect(await inviteCustomer({...base,fetch:after})).toMatchObject({user_id:'user_lost'});
+ });
+ it('does not retry real errors, and gives up after three network failures',async()=>{
+  const dead=vi.fn(async()=>{throw Object.assign(new TypeError('fetch failed'),{cause:{code:'ETIMEDOUT'}});});
+  await expect(inviteCustomer({...base,fetch:dead})).rejects.toThrow('fetch failed');expect(dead).toHaveBeenCalledTimes(3);
+  const {f}=provider({'POST https://api.clerk.com/v1/allowlist_identifiers':ok({},403)});
+  await expect(inviteCustomer({...base,fetch:f})).rejects.toThrow('ALLOWLIST_FAILED');expect(f).toHaveBeenCalledTimes(1);
+ });
 });
