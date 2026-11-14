@@ -10,7 +10,7 @@ import { SUMMARY_FIELD_KEYS, type SummaryFieldKey } from "@/lib/design/summary-f
 import { denyAgenticWithoutApprovedSummary } from "@/lib/design/stage-gate";
 import { z } from "zod";
 import { generateDirDraft } from "@/lib/design/dir-repository";
-import { authorizeImplementation } from "@/lib/design/implementation-consent";
+import { authorizeImplementation, revokeImplementation } from "@/lib/design/implementation-consent";
 
 type Ctx = { params: Promise<{ projectId: string }> };
 
@@ -111,6 +111,29 @@ export async function PUT(req: Request, ctx: Ctx) {
     const message = error instanceof Error ? error.message : "";
     if (message === "UNAUTHENTICATED") return NextResponse.json({ error: message }, { status: 401 });
     if (message === "APPROVED_DIR_REVIEW_MISMATCH") return NextResponse.json({ error: message }, { status: 409 });
+    if (message === "IMPLEMENTATION_WIP_LIMIT_REACHED") return NextResponse.json({ error: message }, { status: 409 });
     return NextResponse.json({ error: "IMPLEMENTATION_CONSENT_FAILED" }, { status: 500 });
+  }
+}
+
+/** Customer ends an in-progress implementation card (frees the WIP=1 slot). */
+const revokeSchema = z.object({ consentId: z.string().uuid() }).strict();
+export async function DELETE(req: Request, ctx: Ctx) {
+  try {
+    const { projectId } = await ctx.params;
+    z.string().uuid().parse(projectId);
+    if (!(await getProjectForCustomer(projectId))) {
+      return NextResponse.json({ error: "NOT_FOUND" }, { status: 404 });
+    }
+    const { consentId } = revokeSchema.parse(await req.json());
+    return NextResponse.json({ revoked: await revokeImplementation(projectId, consentId) });
+  } catch (error) {
+    if (error instanceof z.ZodError || error instanceof SyntaxError) {
+      return NextResponse.json({ error: "INVALID_IMPLEMENTATION_REVOKE" }, { status: 400 });
+    }
+    const message = error instanceof Error ? error.message : "";
+    if (message === "UNAUTHENTICATED") return NextResponse.json({ error: message }, { status: 401 });
+    if (message === "CONSENT_NOT_FOUND") return NextResponse.json({ error: message }, { status: 404 });
+    return NextResponse.json({ error: "IMPLEMENTATION_REVOKE_FAILED" }, { status: 500 });
   }
 }

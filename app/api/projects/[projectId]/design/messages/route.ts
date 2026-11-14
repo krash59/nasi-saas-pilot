@@ -9,6 +9,8 @@ import {
   mergeAiProposedFields,
 } from "@/lib/design/repository";
 import { generateDesignAssistantReply, getDesignAssistantMode } from "@/lib/design/openai";
+import { assertDesignTokensAvailable, recordProjectUsage } from "@/lib/usage/repository";
+import { UsageCapExceededError } from "@/lib/usage/meters";
 import { z } from "zod";
 
 type Ctx = { params: Promise<{ projectId: string }> };
@@ -38,6 +40,8 @@ export async function POST(req: Request, ctx: Ctx) {
     if (!project) return NextResponse.json({ error: "NOT_FOUND" }, { status: 404 });
     await assertDesignChatOpen(projectId);
     const { message } = postSchema.parse(await req.json());
+    // BDD_F10_02: at or over the monthly token cap, refuse before storing or calling the model.
+    await assertDesignTokensAvailable();
     await appendDesignMessage(projectId, "customer", message, false);
 
     const prior = await listDesignMessages(projectId);
@@ -48,6 +52,7 @@ export async function POST(req: Request, ctx: Ctx) {
     const fieldsSnapshot = await getSummaryFields(projectId);
 
     const reply = await generateDesignAssistantReply(history, { fieldsSnapshot });
+    await recordProjectUsage(projectId, "design_tokens", reply.tokensUsed, `design_chat:${getDesignAssistantMode()}`);
     await appendDesignMessage(projectId, "assistant", reply.content, reply.isAiDraft);
     await mergeAiProposedFields(projectId, reply.proposals);
 
@@ -55,6 +60,12 @@ export async function POST(req: Request, ctx: Ctx) {
     const fields = await getSummaryFields(projectId);
     return NextResponse.json({ messages, fields, assistantMode: getDesignAssistantMode() });
   } catch (e) {
+    if (e instanceof UsageCapExceededError) {
+      return NextResponse.json(
+        { error: "USAGE_CAP_EXCEEDED", meter: e.meter, used: e.used, limit: e.limit },
+        { status: 429 },
+      );
+    }
     const msg = e instanceof Error ? e.message : "Error";
     if (msg === "DESIGN_DISCUSSION_CLOSED") {
       return NextResponse.json({ error: msg }, { status: 409 });

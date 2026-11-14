@@ -28,7 +28,7 @@ export function getDesignAssistantMode(): "openai" | "local_stub" {
 export async function generateDesignAssistantReply(
   history: DesignHistoryMessage[],
   options?: { fieldsSnapshot?: SummaryFields },
-): Promise<{ content: string; isAiDraft: true; proposals: FieldProposals }> {
+): Promise<{ content: string; isAiDraft: true; proposals: FieldProposals; tokensUsed: number }> {
   if (localStubEnabled()) return generateDesignAssistantReplyStub(history, options);
 
   const key = process.env.OPENAI_API_KEY;
@@ -70,20 +70,30 @@ export async function generateDesignAssistantReply(
   if (!raw) throw new Error("Empty model response");
 
   const { visibleContent, proposals } = extractFieldProposals(raw);
-  return { content: visibleContent, isAiDraft: true, proposals };
+  // Meter what the provider reports; fall back to a size estimate if usage is absent.
+  const reported = Number(data.usage?.total_tokens);
+  const tokensUsed = Number.isFinite(reported) && reported > 0 ? Math.ceil(reported) : estimateTokens(messages, raw);
+  return { content: visibleContent, isAiDraft: true, proposals, tokensUsed };
+}
+
+/** Rough token estimate (about 4 characters per token) used when no provider count exists. */
+export function estimateTokens(history: { content: string }[], reply: string): number {
+  const chars = history.reduce((n, m) => n + m.content.length, 0) + reply.length;
+  return Math.max(1, Math.ceil(chars / 4));
 }
 
 /** Deterministic stub for tests and offline verification (no OpenAI call). */
 export function generateDesignAssistantReplyStub(
   history: DesignHistoryMessage[],
   options?: { fieldsSnapshot?: SummaryFields },
-): { content: string; isAiDraft: true; proposals: FieldProposals } {
+): { content: string; isAiDraft: true; proposals: FieldProposals; tokensUsed: number } {
   const focus = getNextScaffoldFocus(options?.fieldsSnapshot);
   const lastCustomer = [...history].reverse().find((m) => m.role === "customer");
   const content = `Thanks — I hear you on "${lastCustomer?.content?.slice(0, 80) ?? "your idea"}". Let's clarify ${focus} next. What would success look like for your users?`;
   return {
     content,
     isAiDraft: true,
+    tokensUsed: estimateTokens(history, content),
     proposals: lastCustomer?.content
       ? { problem_statement: lastCustomer.content.slice(0, 200) }
       : {},

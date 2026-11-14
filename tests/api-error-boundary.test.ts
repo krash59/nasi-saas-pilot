@@ -1,10 +1,12 @@
 import {beforeEach,describe,expect,it,vi} from 'vitest';
-const m=vi.hoisted(()=>({create:vi.fn(),project:vi.fn(),append:vi.fn(),open:vi.fn(),conversation:vi.fn(),fields:vi.fn(),messages:vi.fn(),merge:vi.fn(),reply:vi.fn(),summary:vi.fn(),stage:vi.fn(),approve:vi.fn(),confirm:vi.fn()}));
+const m=vi.hoisted(()=>({create:vi.fn(),project:vi.fn(),append:vi.fn(),open:vi.fn(),conversation:vi.fn(),fields:vi.fn(),messages:vi.fn(),merge:vi.fn(),reply:vi.fn(),summary:vi.fn(),stage:vi.fn(),approve:vi.fn(),confirm:vi.fn(),cap:vi.fn(),meter:vi.fn()}));
 vi.mock('@/lib/tenant/customer',()=>({createProject:m.create,requireCustomer:vi.fn()}));
 vi.mock('@/lib/design/repository',()=>({getProjectForCustomer:m.project,appendDesignMessage:m.append,assertDesignChatOpen:m.open,ensureDesignConversationStarted:m.conversation,getSummaryFields:m.fields,listDesignMessages:m.messages,mergeAiProposedFields:m.merge,getOrCreateSummary:m.summary,getProjectStageInfo:m.stage,approveDesignSummary:m.approve,confirmSummaryField:m.confirm}));
 vi.mock('@/lib/design/openai',()=>({generateDesignAssistantReply:m.reply,getDesignAssistantMode:()=>"openai"}));
+vi.mock('@/lib/usage/repository',()=>({assertDesignTokensAvailable:m.cap,recordProjectUsage:m.meter}));
 vi.mock('@/lib/design/dir-repository',()=>({generateDirDraft:vi.fn()}));
 vi.mock('@/lib/design/implementation-consent',()=>({authorizeImplementation:vi.fn()}));
+import {UsageCapExceededError} from '@/lib/usage/meters';
 import {POST as projectPost} from '@/app/api/projects/route';
 import {GET as messagesGet,POST as messagesPost} from '@/app/api/projects/[projectId]/design/messages/route';
 import {GET as summaryGet,POST as summaryPost} from '@/app/api/projects/[projectId]/design/summary/route';
@@ -23,6 +25,7 @@ describe('Customer API failure and authority boundaries',()=>{
  it('sanitizes assistant provider failures',async()=>{m.reply.mockRejectedValue(new Error('OPENAI '+detail));const r=await messagesPost(req({message:'hello'}),ctx);expect(r.status).toBe(503);expect(await r.json()).toEqual({error:'DESIGN_ASSISTANT_UNAVAILABLE'});});
  it('preserves closed-discussion conflict',async()=>{m.open.mockRejectedValue(new Error('DESIGN_DISCUSSION_CLOSED'));expect((await messagesPost(req({message:'hello'}),ctx)).status).toBe(409);expect(m.append).not.toHaveBeenCalled();});
  it('rejects caller-injected assistant role',async()=>{expect((await messagesPost(req({message:'hello',role:'assistant'}),ctx)).status).toBe(400);expect(m.append).not.toHaveBeenCalled();});
+ it('halts at the token cap before storing or calling the model',async()=>{m.cap.mockRejectedValue(new UsageCapExceededError('design_tokens',750000,750000));const r=await messagesPost(req({message:'hello'}),ctx);expect(r.status).toBe(429);expect((await r.json()).error).toBe('USAGE_CAP_EXCEEDED');expect(m.reply).not.toHaveBeenCalled();expect(m.append).not.toHaveBeenCalled();});
  it('still accepts an ordinary customer message',async()=>{expect((await messagesPost(req({message:'hello'}),ctx)).status).toBe(200);expect(m.append).toHaveBeenCalledWith(expect.any(String),'customer','hello',false);});
  it('sanitizes summary read failures',async()=>{m.summary.mockRejectedValue(new Error(detail));const r=await summaryGet(new Request('http://localhost'),ctx);expect(r.status).toBe(500);expect(await r.json()).toEqual({error:'DESIGN_SUMMARY_READ_FAILED'});});
  it('handles summary-write authentication before any mutation',async()=>{m.project.mockRejectedValue(new Error('UNAUTHENTICATED'));expect((await summaryPost(req({action:'approve'}),ctx)).status).toBe(401);expect(m.approve).not.toHaveBeenCalled();});
