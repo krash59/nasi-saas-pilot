@@ -73,9 +73,11 @@ export async function getOrCreateSummary(projectId: string) {
       WHERE project_id = ${projectId}::uuid
     `;
     if (existing.length > 0) return existing[0];
+    // Concurrent first loads must not collide (unique project_id): create once, then read.
     await tx`
       INSERT INTO design_summaries (project_id, fields)
       VALUES (${projectId}::uuid, ${JSON.stringify(emptySummaryFields())}::jsonb)
+      ON CONFLICT (project_id) DO NOTHING
     `;
     const created = await tx`
       SELECT project_id, fields, status, approved_at FROM design_summaries
@@ -94,6 +96,13 @@ export async function confirmSummaryField(
   const customer = await requireCustomer();
   const sql = getSql(process.env.DATABASE_URL!);
   return withCustomerContext(sql, customer.id, async (tx) => {
+    // A customer can confirm a field before the page's first summary load finishes (found by the G3-10 browser
+    // check): create the empty summary for this owned project (RLS-bound) instead of failing with SUMMARY_NOT_FOUND.
+    await tx`
+      INSERT INTO design_summaries (project_id, fields)
+      VALUES (${projectId}::uuid, ${JSON.stringify(emptySummaryFields())}::jsonb)
+      ON CONFLICT (project_id) DO NOTHING
+    `;
     const row = await tx`
       SELECT fields, status FROM design_summaries WHERE project_id = ${projectId}::uuid
     `;
