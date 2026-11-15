@@ -1,5 +1,5 @@
 import DirApproval from "./DirApproval";
-import ImplementationAuthorization from "./ImplementationAuthorization";
+import StoryAcceptance from "./StoryAcceptance";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getProjectForCustomer } from "@/lib/design/repository";
@@ -21,7 +21,7 @@ export default async function DirPage({ params }: { params: Promise<{ projectId:
       {content.sections.map(section => <section key={section.key}>
         <h2>{section.title}</h2><p style={{ whiteSpace: "pre-wrap" }}>{section.content}</p>
       </section>)}
-      {draft!.status === "approved" ? <><p>Design approved at {String(draft!.approved_at)}.</p><ImplementationAuthorization projectId={projectId} content={content} /></> : <DirApproval projectId={projectId} content={content} />}
+      {draft!.status === "approved" ? <><p>Design approved at {String(draft!.approved_at)}.</p><StoryAcceptance projectId={projectId} content={content} /></> : <DirApproval projectId={projectId} content={content} />}
     </> : <p>No DIR draft yet. Approve your Design Summary, then generate a draft from the summary page.</p>}
   </main>;
 }
