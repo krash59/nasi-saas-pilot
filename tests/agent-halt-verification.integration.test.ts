@@ -9,6 +9,7 @@ vi.mock('@/lib/tenant/customer',()=>({requireCustomer:async()=>({...identity})})
 import {getAgentStatus} from '@/lib/agent/status';
 import {recordCustomerReleaseDecision} from '@/lib/release/authorization';
 import {closePgPools} from '@/lib/db/pg-sql';
+import {mfaSession} from './helpers/operator-mfa';
 // @ts-expect-error plain ESM script without types
 import {agentGate} from '../scripts/agent-gate.mjs';
 // @ts-expect-error plain ESM script without types
@@ -33,6 +34,7 @@ describe.skipIf(!url)('Agent HALT and verification packages (real PostgreSQL, se
    const u=new URL(url!);u.username=name;u.password='local_audit_only';urls[name.replace('agt_','')]=u.toString();};
   await mk('agt_agent','nasi_agent_runtime');await mk('agt_orch','nasi_deploy_orchestrator');await mk('agt_rev','nasi_agent_halt_reviewer');
   await mk('agt_app','nasi_app_runtime');await mk('agt_owner','nasi_platform_release_approver');
+  await mfaSession(admin,urls.rev,'agt_rev');await mfaSession(admin,urls.owner,'agt_owner'); // S02_01 operator MFA
   process.env.DATABASE_URL=urls.app;
  });
  beforeEach(async()=>{

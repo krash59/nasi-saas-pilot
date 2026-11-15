@@ -8,6 +8,7 @@ vi.mock('@/lib/tenant/customer',()=>({requireCustomer:async()=>({...identity})})
 import {getReleaseStatus,recordCustomerReleaseDecision} from '@/lib/release/authorization';
 import {POST as releasePost} from '@/app/api/projects/[projectId]/release-authorization/route';
 import {closePgPools} from '@/lib/db/pg-sql';
+import {mfaSession} from './helpers/operator-mfa';
 // @ts-expect-error plain ESM script without types
 import {releaseAuthority} from '../scripts/release-authority.mjs';
 const url=process.env.NASI_ISOLATED_TEST_DATABASE_URL;
@@ -27,6 +28,7 @@ describe.skipIf(!url)('Dual production authorization (real PostgreSQL, separate 
   const mk=async(name:string,role:string)=>{await admin.query(`CREATE ROLE ${name} LOGIN PASSWORD 'local_audit_only' NOSUPERUSER NOBYPASSRLS IN ROLE ${role}`);
    const u=new URL(url!);u.username=name;u.password='local_audit_only';urls[name.replace('rel_','')]=u.toString();};
   await mk('rel_app','nasi_app_runtime');await mk('rel_owner','nasi_platform_release_approver');await mk('rel_orch','nasi_deploy_orchestrator');
+  await mfaSession(admin,urls.owner,'rel_owner'); // S02_01 operator MFA
   process.env.DATABASE_URL=urls.app;
  });
  beforeEach(async()=>{

@@ -8,14 +8,18 @@
 //   clear <haltId> "<reason>"                                                                 (nasi_agent_halt_reviewer)
 // Exit 0 = proceed/ok, 3 = halted or denied, 1 = error.
 import pg from "pg";
+import { noteMfaDenial, splitOtp, verifyOtp } from "./operator-mfa.mjs";
 import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 
 const one = async (c, sql, params) => (await c.query(sql, params)).rows[0].j;
 
-export async function agentGate(connectionString, [cmd, ...args]) {
+export async function agentGate(connectionString, rawArgs) {
+  // S02_01: privileged operator calls need a fresh TOTP session; "--otp <code>" opens it on this connection.
+  const { otp, rest: [cmd, ...args] } = splitOtp(rawArgs);
   const c = new pg.Client({ connectionString });
   await c.connect();
+  if (otp) await verifyOtp(c, otp);
   try {
     if (cmd === "preflight") {
       const [project, consent, action, ...rest] = args;
@@ -32,6 +36,8 @@ export async function agentGate(connectionString, [cmd, ...args]) {
     if (cmd === "staging") return await one(c, "SELECT promote_to_staging($1, $2) AS j", args.slice(0, 2));
     if (cmd === "clear") return await one(c, "SELECT clear_agent_halt($1, $2) AS j", args.slice(0, 2));
     throw new Error("USAGE: preflight|minutes|package|staging|clear");
+  } catch (e) {
+    await noteMfaDenial(c, e);
   } finally {
     await c.end();
   }

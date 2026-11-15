@@ -10,6 +10,7 @@ import {authorizeImplementation} from '@/lib/design/implementation-consent';
 import {recordCustomerReleaseDecision} from '@/lib/release/authorization';
 import {POST as storiesPost} from '@/app/api/projects/[projectId]/stories/route';
 import {closePgPools} from '@/lib/db/pg-sql';
+import {mfaSession} from './helpers/operator-mfa';
 // @ts-expect-error plain ESM script without types
 import {agentGate} from '../scripts/agent-gate.mjs';
 // @ts-expect-error plain ESM script without types
@@ -38,6 +39,7 @@ describe.skipIf(!url)('Stage gates (real PostgreSQL, app + operator logins)',()=
   const mk=async(name:string,role:string)=>{await admin.query(`CREATE ROLE ${name} LOGIN PASSWORD 'local_audit_only' NOSUPERUSER NOBYPASSRLS IN ROLE ${role}`);
    const u=new URL(url!);u.username=name;u.password='local_audit_only';urls[name.replace('stg_','')]=u.toString();};
   await mk('stg_app','nasi_app_runtime');await mk('stg_agent','nasi_agent_runtime');await mk('stg_orch','nasi_deploy_orchestrator');await mk('stg_owner','nasi_platform_release_approver');
+  await mfaSession(admin,urls.owner,'stg_owner'); // S02_01 operator MFA
   process.env.DATABASE_URL=urls.app;
  });
  beforeEach(async()=>{

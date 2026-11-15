@@ -5,11 +5,15 @@
 //   redeem <token>                                                 (deploy step, orchestrator)              -> AUTHORIZED or denial
 // No GitHub/hosting call is made here: a deploy pipeline must redeem the credential before deploying.
 import pg from "pg";
+import { noteMfaDenial, splitOtp, verifyOtp } from "./operator-mfa.mjs";
 import { pathToFileURL } from "node:url";
 
-export async function releaseAuthority(connectionString, [cmd, ...args]) {
+export async function releaseAuthority(connectionString, rawArgs) {
+  // S02_01: privileged operator calls need a fresh TOTP session; "--otp <code>" opens it on this connection.
+  const { otp, rest: [cmd, ...args] } = splitOtp(rawArgs);
   const c = new pg.Client({ connectionString });
   await c.connect();
+  if (otp) await verifyOtp(c, otp);
   try {
     if (cmd === "platform") {
       const [decision, project, release, reason] = args;
@@ -21,6 +25,8 @@ export async function releaseAuthority(connectionString, [cmd, ...args]) {
     if (cmd === "credential") return (await c.query("SELECT issue_production_deploy_credential($1, $2) AS j", args.slice(0, 2))).rows[0].j;
     if (cmd === "redeem") return (await c.query("SELECT redeem_production_deploy_credential($1) AS j", [args[0]])).rows[0].j;
     throw new Error("USAGE: platform|credential|redeem");
+  } catch (e) {
+    await noteMfaDenial(c, e);
   } finally {
     await c.end();
   }

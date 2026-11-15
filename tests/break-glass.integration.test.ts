@@ -8,6 +8,7 @@ vi.mock('@/lib/tenant/customer',()=>({requireCustomer:async()=>({...identity})})
 import {listBreakGlassForCustomer} from '@/lib/account/break-glass';
 import {exportCustomerData} from '@/lib/account/export';
 import {closePgPools} from '@/lib/db/pg-sql';
+import {mfaSession} from './helpers/operator-mfa';
 // @ts-expect-error plain ESM script without types
 import {breakGlass} from '../scripts/break-glass.mjs';
 // @ts-expect-error plain ESM script without types
@@ -30,6 +31,7 @@ describe.skipIf(!url)('Break-glass (real PostgreSQL, separate operator logins)',
    const u=new URL(url!);u.username=name;u.password='local_audit_only';urls[name.replace('bg_','')]=u.toString();};
   await mk('bg_eng','nasi_break_glass');await mk('bg_eng2','nasi_break_glass');await mk('bg_owner','nasi_break_glass_approver');
   await mk('bg_both','nasi_break_glass, nasi_break_glass_approver');await mk('bg_app','nasi_app_runtime');await mk('bg_purge','nasi_retention_purge');
+  for(const who of ['eng','eng2','owner','both'])await mfaSession(admin,urls[who],'bg_'+who); // S02_01 operator MFA
   process.env.DATABASE_URL=urls.app;
  });
  beforeEach(async()=>{

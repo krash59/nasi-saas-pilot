@@ -7,11 +7,15 @@
 //   read <grantId>                                                                          (requesting engineer only)
 //   close <grantId>
 import pg from "pg";
+import { noteMfaDenial, splitOtp, verifyOtp } from "./operator-mfa.mjs";
 import { pathToFileURL } from "node:url";
 
-export async function breakGlass(connectionString, [cmd, ...args]) {
+export async function breakGlass(connectionString, rawArgs) {
+  // S02_01: privileged operator calls need a fresh TOTP session; "--otp <code>" opens it on this connection.
+  const { otp, rest: [cmd, ...args] } = splitOtp(rawArgs);
   const c = new pg.Client({ connectionString });
   await c.connect();
+  if (otp) await verifyOtp(c, otp);
   try {
     if (cmd === "request") {
       const [project, minutes, reason, flag, exception] = args;
@@ -28,6 +32,8 @@ export async function breakGlass(connectionString, [cmd, ...args]) {
     }
     if (cmd === "close") return { closed: (await c.query("SELECT break_glass_close($1) AS ok", [args[0]])).rows[0].ok };
     throw new Error("USAGE: request|approve|read|close");
+  } catch (e) {
+    await noteMfaDenial(c, e);
   } finally {
     await c.end();
   }
