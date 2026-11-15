@@ -8,8 +8,11 @@ import { isAgentRequest, isHitlRoute } from "@/lib/security/agent";
 const isPublicRoute = createRouteMatcher(["/", "/sign-in(.*)", "/api/health", "/api/providers/stripe/webhook"]);
 
 function isPilotApiRoute(pathname: string): boolean {
-  return ["/api/billing/entitlement", "/api/providers/resend/test", "/api/projects"].includes(pathname) ||
-    /^\/api\/projects\/[0-9a-f-]{36}\/(?:design\/(?:messages|summary)|dir(?:\/approve)?)$/i.test(pathname);
+  // Customer product APIs added in rounds 7-12 (stories, usage, agent status, release authorization, NWS handoff,
+  // archive, account export/offboard/break-glass) must accept the same validated pilot bearer as the original routes.
+  return ["/api/billing/entitlement", "/api/providers/resend/test", "/api/projects",
+    "/api/account/export", "/api/account/offboard", "/api/account/break-glass"].includes(pathname) ||
+    /^\/api\/projects\/[0-9a-f-]{36}\/(?:design\/(?:messages|summary)|dir(?:\/approve)?|stories|usage|agent-status|release-authorization|nws-handoff|archive)$/i.test(pathname);
 }
 
 const clerkHandler = clerkMiddleware(async (auth, req) => {

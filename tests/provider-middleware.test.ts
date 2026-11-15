@@ -17,6 +17,11 @@ it('denies missing API credentials without waiting on hosted auth',async()=>{
 it('still requires Clerk validation for a browser session cookie',async()=>{
  expect((await middleware(new NextRequest('http://localhost/api/billing/entitlement',{headers:{cookie:'__session=synthetic-invalid-token'}}),{}))?.status).toBe(401);expect(m.clerk).toHaveBeenCalled();
 });
-it.each(['/api/billing/entitlement','/api/providers/resend/test','/api/projects','/api/projects/00000000-0000-4000-8000-000000000001/dir','/api/projects/00000000-0000-4000-8000-000000000001/dir/approve','/api/projects/00000000-0000-4000-8000-000000000001/design/summary'])('routes pilot bearer credentials to the Node validator at %s',async path=>{
+it.each(['/api/billing/entitlement','/api/providers/resend/test','/api/projects','/api/projects/00000000-0000-4000-8000-000000000001/dir','/api/projects/00000000-0000-4000-8000-000000000001/dir/approve','/api/projects/00000000-0000-4000-8000-000000000001/design/summary','/api/projects/00000000-0000-4000-8000-000000000001/stories','/api/projects/00000000-0000-4000-8000-000000000001/usage','/api/projects/00000000-0000-4000-8000-000000000001/agent-status','/api/projects/00000000-0000-4000-8000-000000000001/release-authorization','/api/projects/00000000-0000-4000-8000-000000000001/nws-handoff','/api/projects/00000000-0000-4000-8000-000000000001/archive','/api/account/export','/api/account/offboard','/api/account/break-glass'])('routes pilot bearer credentials to the Node validator at %s',async path=>{
  vi.stubEnv('NASI_PROVIDER_MODE','synthetic-pilot');expect((await middleware(new NextRequest('http://localhost'+path,{headers:{Authorization:'Bearer invalid-fixture'}}),{}))?.status).toBe(200);expect(m.clerk).not.toHaveBeenCalled();
+});
+it('pilot bearer routing stays exact: unknown project sub-routes still need Clerk',async()=>{
+ vi.stubEnv('NASI_PROVIDER_MODE','synthetic-pilot');
+ await middleware(new NextRequest('http://localhost/api/projects/00000000-0000-4000-8000-000000000001/not-a-route',{headers:{Authorization:'Bearer invalid-fixture'}}),{});
+ expect(m.clerk).toHaveBeenCalled();
 });
