@@ -36,6 +36,7 @@ jobs:
       - name: type check
         run: npx tsc --noEmit
       - name: tests (real PostgreSQL)
-        run: npx vitest run
+        # One file at a time: the integration suites each rebuild the single disposable nasi_audit schema.
+        run: npx vitest run --no-file-parallelism
       - name: production build (no settings file)
         run: NODE_ENV=production npx next build
