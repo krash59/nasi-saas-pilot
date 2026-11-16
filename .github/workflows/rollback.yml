@@ -27,8 +27,8 @@ jobs:
       - name: restore deployment
         run: |
           start=$(date +%s)
-          if [ -n "$TARGET" ]; then npx --yes vercel@39.3.0 rollback "$TARGET" --yes --token "${{ secrets.VERCEL_TOKEN }}"
-          else npx --yes vercel@39.3.0 rollback --yes --token "${{ secrets.VERCEL_TOKEN }}"; fi
+          if [ -n "$TARGET" ]; then npx --yes vercel@65.2.0 rollback "$TARGET" --yes --token "${{ secrets.VERCEL_TOKEN }}"
+          else npx --yes vercel@65.2.0 rollback --yes --token "${{ secrets.VERCEL_TOKEN }}"; fi
           echo "ROLLBACK_SECONDS=$(( $(date +%s) - start ))"
       - name: health after rollback
         run: |

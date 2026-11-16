@@ -43,7 +43,7 @@ jobs:
       - name: deploy to Vercel (staging project)
         id: deploy
         run: |
-          url=$(npx --yes vercel@39.3.0 deploy --prod --yes --token "${{ secrets.VERCEL_TOKEN }}")
+          url=$(npx --yes vercel@65.2.0 deploy --prod --yes --token "${{ secrets.VERCEL_TOKEN }}")
           echo "url=$url" >> "$GITHUB_OUTPUT"
       - name: post-deploy health
         run: |
