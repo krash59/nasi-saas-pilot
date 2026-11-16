@@ -106,7 +106,7 @@ describe.skipIf(!url)('Break-glass (real PostgreSQL, separate operator logins)',
   await runRetentionPurge(urls.purge);
   expect((await admin.query('SELECT project_id FROM break_glass_grants WHERE id=$1',[g])).rows).toEqual([{project_id:null}]);
   expect(await log(g)).toHaveLength(3);
-  await admin.query("UPDATE break_glass_access_log SET at=now()-interval '366 days'");await admin.query("UPDATE break_glass_grants SET requested_at=now()-interval '366 days'");
+  await admin.query("BEGIN; SET LOCAL nasi.audit_maintenance='on'; UPDATE break_glass_access_log SET at=now()-interval '366 days'; COMMIT");await admin.query("UPDATE break_glass_grants SET requested_at=now()-interval '366 days'");
   expect((await runRetentionPurge(urls.purge)).break_glass_events).toBe(3);
   expect((await admin.query('SELECT count(*)::int AS n FROM break_glass_grants')).rows[0].n).toBe(0);
  });

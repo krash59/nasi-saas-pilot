@@ -110,7 +110,7 @@ describe.skipIf(!url)('Dual production authorization (real PostgreSQL, separate 
   it('expired approvals and a different release fail closed',async()=>{
    await both();
    expect(await as('orch','credential',P,'rel-other-9999999')).toEqual({denied:'CUSTOMER_RELEASE_AUTHORIZATION_MISSING'});
-   await admin.query("UPDATE customer_release_authorizations SET expires_at=now()-interval '1 second'");
+   await admin.query("BEGIN; SET LOCAL nasi.audit_maintenance='on'; UPDATE customer_release_authorizations SET expires_at=now()-interval '1 second'; COMMIT");
    expect(await as('orch','credential',P,R)).toEqual({denied:'CUSTOMER_RELEASE_AUTHORIZATION_EXPIRED'});
   });
   it('stops at the production deploy cap (3 per project per month)',async()=>{
