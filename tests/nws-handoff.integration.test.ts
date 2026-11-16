@@ -1,6 +1,6 @@
 import {afterAll,beforeAll,beforeEach,describe,expect,it,vi} from 'vitest';
 import {Client} from 'pg';
-import {readFileSync,readdirSync} from 'node:fs';
+import {existsSync,readFileSync,readdirSync} from 'node:fs';
 import {resolve} from 'node:path';
 // BDD_F14_01 NWS/GAS mapping discipline (DIR §6.2, NWS_GAS_ADAPTER_CONTRACT.snl).
 const identity=vi.hoisted(()=>({id:'00000000-0000-4000-8000-000000000001',clerk_user_id:'test_a'}));
@@ -36,7 +36,8 @@ describe.skipIf(!url)('NWS handoff mapping (real PostgreSQL, app role)',()=>{
  });
  afterAll(async()=>{await closePgPools();await admin?.end();if(oldUrl===undefined)delete process.env.DATABASE_URL;else process.env.DATABASE_URL=oldUrl;});
 
- it('payload carries exactly the adapter contract REQUIRED_INPUT_FIELDS, read from the contract on disk; never sent',async()=>{
+ // The NWS contract lives on the owner's host, outside this repository: NOT-RUN (skipped) where it is absent, e.g. hosted CI.
+ it.skipIf(!existsSync(CONTRACT))('payload carries exactly the adapter contract REQUIRED_INPUT_FIELDS, read from the contract on disk; never sent',async()=>{
   const h=await buildNwsHandoff(P);
   expect(Object.keys(h.payload).sort()).toEqual(requiredFields().sort());
   expect(h.payload).not.toHaveProperty('HITL_RESOLUTION_IF_VERIFIED');expect(h.payload).not.toHaveProperty('CURRENT_GP1P_RESULT_IF_VERIFIED');
