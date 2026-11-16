@@ -1,0 +1,41 @@
+# CI: every push and pull request. Synthetic data only; the database is a throwaway container inside the runner.
+name: ci
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: ci_only_not_a_secret
+          POSTGRES_DB: nasi_audit
+        ports: ['127.0.0.1:5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      # The integration tests refuse any database that is not 127.0.0.1/nasi_audit (disposable by design).
+      NASI_ISOLATED_TEST_DATABASE_URL: postgresql://postgres:ci_only_not_a_secret@127.0.0.1:5432/nasi_audit
+      DIR_TEST_DATABASE_URL: postgresql://postgres:ci_only_not_a_secret@127.0.0.1:5432/nasi_audit
+      NEXT_TELEMETRY_DISABLED: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: type check
+        run: npx tsc --noEmit
+      - name: tests (real PostgreSQL)
+        run: npx vitest run
+      - name: production build (no settings file)
+        run: NODE_ENV=production npx next build

@@ -1,0 +1,40 @@
+# Roll staging back to an earlier deployment (S13_01). Manual, through the protected `staging` environment.
+# App-only: the database is not touched (migrations are forward-only and additive), so other tenants' data is unaffected.
+name: rollback
+on:
+  workflow_dispatch:
+    inputs:
+      deployment:
+        description: Deployment URL to restore (leave empty for the previous production deployment of the staging project)
+        required: false
+        default: ''
+permissions:
+  contents: read
+concurrency:
+  group: deploy-staging
+  cancel-in-progress: false
+jobs:
+  rollback:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment: staging
+    env:
+      VERCEL_ORG_ID: ${{ vars.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
+      TARGET: ${{ github.event.inputs.deployment }}
+    steps:
+      - name: restore deployment
+        run: |
+          start=$(date +%s)
+          if [ -n "$TARGET" ]; then npx --yes vercel@39.3.0 rollback "$TARGET" --yes --token "${{ secrets.VERCEL_TOKEN }}"
+          else npx --yes vercel@39.3.0 rollback --yes --token "${{ secrets.VERCEL_TOKEN }}"; fi
+          echo "ROLLBACK_SECONDS=$(( $(date +%s) - start ))"
+      - name: health after rollback
+        run: |
+          url="https://${{ vars.STAGING_HOST }}"
+          for i in $(seq 1 30); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' "$url/api/health" || true)
+            [ "$code" = 200 ] && { echo "health 200 after rollback"; exit 0; }; sleep 2
+          done
+          echo "UNHEALTHY_AFTER_ROLLBACK (last status $code)"; exit 1

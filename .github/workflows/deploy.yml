@@ -1,0 +1,66 @@
+# Deploys. Staging: automatic from main after CI passes, through the protected `staging` environment.
+# Production: manual only, held for the owner's approval in the protected `production` environment, and then refused,
+# because the pilot is synthetic-only (decisions/DELIVERY_DECISIONS_V1.json: production unauthorized, no real customers).
+name: deploy
+on:
+  workflow_run:
+    workflows: [ci]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      target:
+        description: staging or production
+        required: true
+        default: staging
+        type: choice
+        options: [staging, production]
+permissions:
+  contents: read
+concurrency:
+  group: deploy-${{ github.event.inputs.target || 'staging' }}
+  cancel-in-progress: false
+jobs:
+  staging:
+    if: >-
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success') ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.target == 'staging' && github.ref == 'refs/heads/main')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment:
+      name: staging
+      url: ${{ steps.deploy.outputs.url }}
+    env:
+      VERCEL_ORG_ID: ${{ vars.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: deploy to Vercel (staging project)
+        id: deploy
+        run: |
+          url=$(npx --yes vercel@39.3.0 deploy --prod --yes --token "${{ secrets.VERCEL_TOKEN }}")
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+      - name: post-deploy health
+        run: |
+          for i in $(seq 1 30); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' "${{ steps.deploy.outputs.url }}/api/health" || true)
+            [ "$code" = 200 ] && { echo "health 200"; exit 0; }; sleep 2
+          done
+          echo "STAGING_UNHEALTHY (last status $code)"; exit 1
+
+  production:
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.target == 'production' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    environment: production          # held here until the owner approves (required reviewer)
+    steps:
+      - name: production release authority
+        run: |
+          echo "PRODUCTION_DENIED: the NASI pilot is synthetic-only; production is not authorized"
+          echo "(decisions/DELIVERY_DECISIONS_V1.json; a production release needs its own customer and platform authorization)."
+          exit 1
