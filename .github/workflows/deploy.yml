@@ -1,6 +1,6 @@
 # Deploy gates.
 # Staging: Vercel's GitHub app builds `main` (the only branch it builds) into the staging project. This job runs in the
-# protected `staging` environment after CI passes on main: it waits for Vercel's deployment of exactly this commit to
+# protected `staging` environment after CI passes on main: it waits for Vercel's build status on exactly this commit to
 # succeed, then checks health on the staging address. A failed check fails the gate (rollback: ops/RUNBOOK_ROLLBACK.md).
 # Production: manual only, held for the owner's approval in the protected `production` environment, and then refused,
 # because the pilot is synthetic-only (decisions/DELIVERY_DECISIONS_V1.json: production unauthorized, no real customers).
@@ -20,7 +20,7 @@ on:
         options: [staging, production]
 permissions:
   contents: read
-  deployments: read
+  statuses: read
 concurrency:
   group: deploy-${{ github.event.inputs.target || 'staging' }}
   cancel-in-progress: false
@@ -38,16 +38,14 @@ jobs:
       SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
       GH_TOKEN: ${{ github.token }}
     steps:
-      - name: wait for Vercel's deployment of this commit
+      - name: wait for Vercel's build of this commit
+        # Vercel's GitHub app reports each build as a commit status with context "Vercel" (newest first).
         run: |
           for i in $(seq 1 90); do
-            id=$(gh api "repos/${{ github.repository }}/deployments?sha=$SHA" --jq '[.[] | select(.creator.login=="vercel[bot]")][0].id // empty')
-            if [ -n "$id" ]; then
-              state=$(gh api "repos/${{ github.repository }}/deployments/$id/statuses" --jq '.[0].state // "pending"')
-              echo "vercel deployment $id: $state"
-              [ "$state" = success ] && exit 0
-              case "$state" in failure|error) echo "VERCEL_DEPLOYMENT_FAILED"; exit 1;; esac
-            fi
+            state=$(gh api "repos/${{ github.repository }}/commits/$SHA/statuses" --jq '[.[] | select(.context=="Vercel" and .creator.login=="vercel[bot]")][0].state // "pending"')
+            echo "vercel build of $SHA: $state"
+            [ "$state" = success ] && exit 0
+            case "$state" in failure|error) echo "VERCEL_DEPLOYMENT_FAILED"; exit 1;; esac
             sleep 10
           done
           echo "VERCEL_DEPLOYMENT_NOT_READY"; exit 1
