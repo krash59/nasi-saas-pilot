@@ -49,13 +49,16 @@ jobs:
             sleep 10
           done
           echo "VERCEL_DEPLOYMENT_NOT_READY"; exit 1
-      - name: post-deploy health on the staging address
+      - name: post-deploy health on the staging address, serving this commit
+        # After a rollback Vercel stops moving the address to new builds (ops/RUNBOOK_ROLLBACK.md step 5);
+        # comparing the commit stops a healthy older deployment from passing the gate.
         run: |
           for i in $(seq 1 30); do
-            code=$(curl -s -o /dev/null -w '%{http_code}' "https://${{ vars.STAGING_HOST }}/api/health" || true)
-            [ "$code" = 200 ] && { echo "health 200"; exit 0; }; sleep 2
+            body=$(curl -s -w '\n%{http_code}' "https://${{ vars.STAGING_HOST }}/api/health" || true)
+            code=$(printf '%s' "$body" | tail -n1); served=$(printf '%s' "$body" | head -n -1 | jq -r '.commit // empty' 2>/dev/null || true)
+            [ "$code" = 200 ] && [ "$served" = "$SHA" ] && { echo "health 200, serving $SHA"; exit 0; }; sleep 2
           done
-          echo "STAGING_UNHEALTHY (last status $code)"; exit 1
+          echo "STAGING_UNHEALTHY_OR_NOT_THIS_COMMIT (last status $code, serving ${served:-unknown})"; exit 1
 
   production:
     if: github.event_name == 'workflow_dispatch' && github.event.inputs.target == 'production' && github.ref == 'refs/heads/main'
