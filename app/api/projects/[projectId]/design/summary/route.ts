@@ -11,6 +11,7 @@ import { denyAgenticWithoutApprovedSummary } from "@/lib/design/stage-gate";
 import { z } from "zod";
 import { generateDirDraft } from "@/lib/design/dir-repository";
 import { authorizeImplementation, revokeImplementation } from "@/lib/design/implementation-consent";
+import { sendNwsJob } from "@/lib/nws/job";
 
 type Ctx = { params: Promise<{ projectId: string }> };
 
@@ -39,7 +40,7 @@ export async function GET(_req: Request, ctx: Ctx) {
 const confirmSchema = z.object({
   action: z.literal("confirm_field"),
   field: z.enum(SUMMARY_FIELD_KEYS as unknown as [SummaryFieldKey, ...SummaryFieldKey[]]),
-  customer_confirmed: z.string().min(1),
+  customer_confirmed: z.string().max(8000), // DC-01: an empty value clears the field before approval
   ai_proposed: z.string().optional(),
 }).strict();
 
@@ -69,7 +70,7 @@ export async function POST(req: Request, ctx: Ctx) {
     const fields = await confirmSummaryField(
       projectId,
       parsed.field,
-      parsed.customer_confirmed,
+      parsed.customer_confirmed.trim() || null,
       parsed.ai_proposed,
     );
     return NextResponse.json({ fields });
@@ -103,7 +104,15 @@ export async function PUT(req: Request, ctx: Ctx) {
     if (!stage || denyAgenticWithoutApprovedSummary(stage)) {
       return NextResponse.json({ error: "DESIGN_SUMMARY_NOT_APPROVED" }, { status: 403 });
     }
-    return NextResponse.json(await authorizeImplementation(projectId, body.reviewedContent), { status: 201 });
+    const consent = await authorizeImplementation(projectId, body.reviewedContent);
+    // DC-06: after test-build authorization the full job goes to NWS. The consent stands even if sending fails
+    // (the customer can re-send from the same page; POST /nws-handoff/job is idempotent).
+    let nwsHandoff: { id: string; job_sha256: string; sent_at: unknown; received_at: unknown } | null = null;
+    try {
+      const sent = await sendNwsJob(projectId);
+      nwsHandoff = (sent.handoff ?? null) as unknown as typeof nwsHandoff;
+    } catch { nwsHandoff = null; }
+    return NextResponse.json({ ...consent, nwsHandoff }, { status: 201 });
   } catch (error) {
     if (error instanceof z.ZodError || error instanceof SyntaxError) {
       return NextResponse.json({ error: "INVALID_IMPLEMENTATION_CONSENT" }, { status: 400 });

@@ -58,7 +58,8 @@ describe.skipIf(!url)('Stage gates (real PostgreSQL, app + operator logins)',()=
   it('derives one story with Gherkin per must-have feature, inventing nothing',()=>{
    const s=storiesFromDir(DIR);
    expect(s.map(x=>x.i_want)).toEqual(['Book a table','Cancel a booking']);
-   expect(s[0]).toMatchObject({id:'ST01',as_a:'Restaurant guest',so_that:'Diners cannot book tables online'});
+   expect(s[0]).toMatchObject({id:'ST01',as_a:'Restaurant guest',gp1p_action_id:'GP1P.STORY.ST01'});
+   expect(s[0].so_that).toMatch(/diners cannot book tables online/); // DC-02: one specific DIR sentence, reworded as the benefit
    expect(s[0].gherkin).toMatch(/^Feature: Book a table\n {2}Scenario: .+\n {4}Given .+\n {4}When .+\n {4}Then /);
    expect(()=>storiesFromDir({sections:[]})).toThrow('DIR_HAS_NO_FEATURES');
   });

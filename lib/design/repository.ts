@@ -16,9 +16,9 @@ async function projectOwnedByCustomer(projectId: string, customerId: string) {
   const sql = getSql(process.env.DATABASE_URL!);
   return withCustomerContext(sql, customerId, async (tx) => {
     const rows = await tx`
-      SELECT id, customer_id, lifecycle_stage FROM projects WHERE id = ${projectId}::uuid
+      SELECT id, customer_id, lifecycle_stage, name, design_version FROM projects WHERE id = ${projectId}::uuid
     `;
-    const row = rows[0] as { id: string; customer_id: string; lifecycle_stage: string } | undefined;
+    const row = rows[0] as { id: string; customer_id: string; lifecycle_stage: string; name: string; design_version: number } | undefined;
     if (!row || !canAccessProject({ customerId, projectCustomerId: row.customer_id })) {
       // RLS hides other tenants' rows, so "missing" and "foreign" look the same here.
       // Either way the requester was denied: record it (BDD_F05_01).
@@ -39,12 +39,59 @@ export async function listDesignMessages(projectId: string) {
   const sql = getSql(process.env.DATABASE_URL!);
   return withCustomerContext(sql, customer.id, async (tx) => {
     return tx`
-      SELECT id, role, content, is_ai_draft, created_at
+      SELECT id, role, content, is_ai_draft, created_at, edited_at, withdrawn_at
       FROM design_messages
       WHERE project_id = ${projectId}::uuid
       ORDER BY created_at ASC
     `;
   });
+}
+
+export { historyForAssistant } from "@/lib/design/history";
+
+/**
+ * DC-01: before Design Summary approval the customer may edit or withdraw THEIR OWN message. The earlier text is kept in
+ * the append-only design_message_revisions table (never lost); the message row then shows only the current version.
+ */
+export async function reviseDesignMessage(
+  projectId: string,
+  messageId: string,
+  change: { action: "edit"; content: string } | { action: "withdraw" },
+) {
+  const customer = await requireCustomer();
+  const sql = getSql(process.env.DATABASE_URL!);
+  return withCustomerContext(sql, customer.id, async (tx) => {
+    const summary = await tx`SELECT status FROM design_summaries WHERE project_id = ${projectId}::uuid`;
+    if ((summary[0] as { status?: string } | undefined)?.status === "approved") throw new Error("DESIGN_DISCUSSION_CLOSED");
+    const rows = await tx`
+      SELECT id, role, content, withdrawn_at FROM design_messages
+      WHERE id = ${messageId}::uuid AND project_id = ${projectId}::uuid FOR UPDATE
+    `;
+    const msg = rows[0] as { id: string; role: string; content: string; withdrawn_at: unknown } | undefined;
+    if (!msg) throw new Error("MESSAGE_NOT_FOUND");
+    if (msg.role !== "customer") throw new Error("ONLY_OWN_MESSAGES");
+    if (msg.withdrawn_at) throw new Error("MESSAGE_WITHDRAWN");
+    if (change.action === "edit" && change.content === msg.content) return listDesignMessagesTx(tx, projectId);
+    await tx`
+      INSERT INTO design_message_revisions (project_id, customer_id, message_id, action, previous_content, new_content, revised_by)
+      VALUES (${projectId}::uuid, ${customer.id}::uuid, ${messageId}::uuid, ${change.action}, ${msg.content},
+              ${change.action === "edit" ? change.content : null}, ${customer.clerk_user_id})
+    `;
+    if (change.action === "edit") {
+      await tx`UPDATE design_messages SET content = ${change.content}, edited_at = now() WHERE id = ${messageId}::uuid`;
+    } else {
+      await tx`UPDATE design_messages SET withdrawn_at = now() WHERE id = ${messageId}::uuid`;
+    }
+    return listDesignMessagesTx(tx, projectId);
+  });
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function listDesignMessagesTx(tx: any, projectId: string) {
+  return tx`
+    SELECT id, role, content, is_ai_draft, created_at, edited_at, withdrawn_at
+    FROM design_messages WHERE project_id = ${projectId}::uuid ORDER BY created_at ASC
+  `;
 }
 
 export async function appendDesignMessage(
@@ -90,7 +137,7 @@ export async function getOrCreateSummary(projectId: string) {
 export async function confirmSummaryField(
   projectId: string,
   field: SummaryFieldKey,
-  customerConfirmed: string,
+  customerConfirmed: string | null,
   aiProposed?: string | null,
 ) {
   const customer = await requireCustomer();

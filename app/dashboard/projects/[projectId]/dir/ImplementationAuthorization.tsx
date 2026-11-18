@@ -8,6 +8,8 @@ export default function ImplementationAuthorization({projectId,content}:{project
   const [busy,setBusy]=useState(false);
   const [error,setError]=useState('');
   const [expiresAt,setExpiresAt]=useState<string|null>(null);
+  const [handoff,setHandoff]=useState<{job_sha256:string;received_at?:string|null}|null>(null);
+  const [sendError,setSendError]=useState('');
   const apiFetch=useAuthenticatedApiFetch();
   async function authorize(){
     if(!confirmed||busy)return;
@@ -21,10 +23,23 @@ export default function ImplementationAuthorization({projectId,content}:{project
       const body=await response.json();
       if(body.consent?.implementation_scope!=='nonproduction'||body.nwsExecutionAuthorized!==false||body.productionReleaseAuthorized!==false||!Number.isFinite(Date.parse(body.consent.expires_at)))throw new Error('INVALID_AUTHORIZATION_RESPONSE');
       setExpiresAt(body.consent.expires_at);
+      setHandoff(body.nwsHandoff??null);
     }catch{setError('We could not save your authorization. Please try again.');}
     finally{setBusy(false);}
   }
-  if(expiresAt)return <section aria-label="Test build authorization"><h2>Test build authorized</h2><p>Your approval covers this reviewed design version in the test environment, until {new Date(expiresAt).toLocaleString()}.</p></section>;
+  async function resend(){
+    setSendError('');
+    try{
+      const r=await apiFetch(`/api/projects/${projectId}/nws-handoff/job`,{method:'POST'});
+      if(!r.ok)throw new Error('SEND_FAILED');
+      setHandoff((await r.json()).handoff);
+    }catch{setSendError('We could not send the build job yet. Please try again.');}
+  }
+  if(expiresAt)return <section aria-label="Test build authorization"><h2>Test build authorized</h2><p>Your approval covers this reviewed design version in the test environment, until {new Date(expiresAt).toLocaleString()}.</p>
+    <section aria-label="NWS build job">{handoff
+      ?<p>Sent to NWS: your approved design, accepted stories and this authorization (job {handoff.job_sha256.slice(0,12)}). {handoff.received_at?'NWS has confirmed receipt.':'Waiting for NWS to confirm receipt.'}</p>
+      :<p>The build job has not been sent yet. <button type="button" onClick={resend}>Send to NWS</button></p>}
+      {sendError&&<p role="alert">{sendError}</p>}</section></section>;
   return <section aria-label="Test build authorization">
     <h2>Authorize a test build</h2>
     <p>This approval covers the design shown above in the test environment. A changed design needs a new review. It does not approve a production release.</p>

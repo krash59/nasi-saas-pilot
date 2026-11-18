@@ -4,7 +4,7 @@ import type {DirDraftContent} from '@/lib/design/dir-draft';
 import {useAuthenticatedApiFetch} from '@/lib/providers/use-authenticated-api-fetch';
 import ImplementationAuthorization from './ImplementationAuthorization';
 
-type Story={id:string;as_a:string;i_want:string;so_that:string;gherkin:string};
+type Story={id:string;as_a:string;i_want:string;so_that:string;gherkin:string;dir_refs?:{feature:string;persona:string;benefit:string};gp1p_action_id?:string};
 type StorySet={status:'AI_DRAFT'|'accepted';stories:Story[];accepted_at?:string|null};
 
 /** S07_01 (DIR §5.2): DIR -> Agile/BDD -> Kanban. The customer reviews and accepts the exact AI_DRAFT stories before
@@ -45,6 +45,7 @@ export default function StoryAcceptance({projectId,content}:{projectId:string;co
         <h3>{s.id}: {s.i_want}</h3>
         <p>As a {s.as_a}, I want {s.i_want}, so that {s.so_that}.</p>
         <pre style={{whiteSpace:'pre-wrap',fontSize:13}}>{s.gherkin}</pre>
+        {s.dir_refs&&<p style={{fontSize:12,color:'#555'}}>From your DIR: {s.dir_refs.feature}, {s.dir_refs.persona}, {s.dir_refs.benefit}{s.gp1p_action_id?` · build step ${s.gp1p_action_id}`:''}</p>}
       </article>)}
       {set.status!=='accepted'&&<>
         <label><input type="checkbox" checked={confirmed} disabled={busy} onChange={e=>setConfirmed(e.target.checked)}/> I have reviewed these stories and accept them for the build board.</label>

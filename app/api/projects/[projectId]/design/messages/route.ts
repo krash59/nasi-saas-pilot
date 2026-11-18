@@ -4,11 +4,14 @@ import {
   assertDesignChatOpen,
   ensureDesignConversationStarted,
   getProjectForCustomer,
+  getProjectStageInfo,
   getSummaryFields,
   listDesignMessages,
   mergeAiProposedFields,
+  reviseDesignMessage,
 } from "@/lib/design/repository";
 import { generateDesignAssistantReply, getDesignAssistantMode } from "@/lib/design/openai";
+import { historyForAssistant } from "@/lib/design/history";
 import { assertDesignTokensAvailable, recordProjectUsage } from "@/lib/usage/repository";
 import { UsageCapExceededError } from "@/lib/usage/meters";
 import { z } from "zod";
@@ -22,7 +25,9 @@ export async function GET(_req: Request, ctx: Ctx) {
     if (!project) return NextResponse.json({ error: "NOT_FOUND" }, { status: 404 });
     const messages = await ensureDesignConversationStarted(projectId);
     const fields = await getSummaryFields(projectId);
-    return NextResponse.json({ messages, fields, assistantMode: getDesignAssistantMode() });
+    const stage = await getProjectStageInfo(projectId);
+    return NextResponse.json({ messages, fields, assistantMode: getDesignAssistantMode(), projectName: project.name,
+      designVersion: project.design_version, chatOpen: stage?.summary_status !== "approved" });
   } catch (error) {
     if (error instanceof Error && error.message === "UNAUTHENTICATED") {
       return NextResponse.json({ error: "UNAUTHENTICATED" }, { status: 401 });
@@ -45,10 +50,8 @@ export async function POST(req: Request, ctx: Ctx) {
     await appendDesignMessage(projectId, "customer", message, false);
 
     const prior = await listDesignMessages(projectId);
-    const history = (prior as { role: string; content: string }[]).map((m) => ({
-      role: m.role as "customer" | "assistant",
-      content: m.content,
-    }));
+    // DC-01: the AI receives only the current version of each message, never withdrawn or superseded text.
+    const history = historyForAssistant(prior as { role: string; content: string; withdrawn_at?: unknown }[]);
     const fieldsSnapshot = await getSummaryFields(projectId);
 
     const reply = await generateDesignAssistantReply(history, { fieldsSnapshot });
@@ -78,5 +81,30 @@ export async function POST(req: Request, ctx: Ctx) {
       return NextResponse.json({ error: "DESIGN_ASSISTANT_UNAVAILABLE" }, { status: 503 });
     }
     return NextResponse.json({ error: "DESIGN_MESSAGE_FAILED" }, { status: 500 });
+  }
+}
+
+const patchSchema = z.discriminatedUnion("action", [
+  z.object({ action: z.literal("edit"), messageId: z.string().uuid(), content: z.string().trim().min(1).max(8000) }).strict(),
+  z.object({ action: z.literal("withdraw"), messageId: z.string().uuid() }).strict(),
+]);
+
+/** DC-01: the customer edits or withdraws their own message before Design Summary approval (history is kept). */
+export async function PATCH(req: Request, ctx: Ctx) {
+  try {
+    const { projectId } = await ctx.params;
+    z.string().uuid().parse(projectId);
+    if (!(await getProjectForCustomer(projectId))) return NextResponse.json({ error: "NOT_FOUND" }, { status: 404 });
+    const body = patchSchema.parse(await req.json());
+    const messages = await reviseDesignMessage(projectId, body.messageId,
+      body.action === "edit" ? { action: "edit", content: body.content } : { action: "withdraw" });
+    return NextResponse.json({ messages, assistantMode: getDesignAssistantMode() });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "";
+    if (msg === "UNAUTHENTICATED") return NextResponse.json({ error: msg }, { status: 401 });
+    if (e instanceof z.ZodError || e instanceof SyntaxError) return NextResponse.json({ error: "INVALID_MESSAGE_CHANGE" }, { status: 400 });
+    if (msg === "DESIGN_DISCUSSION_CLOSED") return NextResponse.json({ error: msg }, { status: 409 });
+    if (["MESSAGE_NOT_FOUND", "ONLY_OWN_MESSAGES", "MESSAGE_WITHDRAWN"].includes(msg)) return NextResponse.json({ error: msg }, { status: 400 });
+    return NextResponse.json({ error: "DESIGN_MESSAGE_CHANGE_FAILED" }, { status: 500 });
   }
 }
