@@ -1,6 +1,7 @@
 "use client";
 
 import { SUMMARY_FIELD_KEYS } from "@/lib/design/summary-fields";
+import ReviseDesign from "../ReviseDesign";
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useAuthenticatedApiFetch } from "@/lib/providers/use-authenticated-api-fetch";
@@ -124,8 +125,11 @@ export function SummaryEditor({ projectId }: { projectId: string }) {
               style={{ width: "100%", display: "block" }}
               disabled={status === "approved"}
               onBlur={(e) => {
-                if (status !== "approved" && e.target.value.trim()) {
+                if (status === "approved") return;
+                if (e.target.value.trim()) {
                   confirmField(key, e.target.value.trim(), draft);
+                } else if (confirmed) {
+                  confirmField(key, "", draft); // DC-01: emptying a confirmed field clears it
                 }
               }}
             />
@@ -134,6 +138,7 @@ export function SummaryEditor({ projectId }: { projectId: string }) {
         );
       })}
       {msg && <p role="status">{msg}</p>}
+      {status === "approved" && <ReviseDesign projectId={projectId} />}
       {status === "approved" && <div>
         <p>Summary approval creates a DIR draft for review. Implementation requires separate authorization.</p>
         <button type="button" disabled={generating} onClick={generateDir}>
