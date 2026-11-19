@@ -22,6 +22,7 @@ export function SummaryEditor({ projectId }: { projectId: string }) {
   const [status, setStatus] = useState("draft");
   const [msg, setMsg] = useState<string | null>(null);
   const [generating, setGenerating] = useState(false);
+  const [filling, setFilling] = useState(false);
   const apiFetch = useAuthenticatedApiFetch();
 
   async function generateDir() {
@@ -34,6 +35,29 @@ export function SummaryEditor({ projectId }: { projectId: string }) {
       setMsg("Could not generate the DIR draft. Please retry.");
     } finally {
       setGenerating(false);
+    }
+  }
+
+  /** Asks the AI to draft every unconfirmed area from the whole design chat. Drafts still need your confirmation. */
+  async function fillFromChat() {
+    setFilling(true);
+    try {
+      const res = await apiFetch(`/api/projects/${projectId}/design/summary`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "fill_from_chat" }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setMsg(data.error);
+        return;
+      }
+      setMsg(data.filled?.length ? "AI drafts filled from your chat. Review each one, then confirm it." : "The chat has nothing new to draft yet.");
+      await load();
+    } catch {
+      setMsg("Could not fill from chat. Please retry.");
+    } finally {
+      setFilling(false);
     }
   }
 
@@ -95,6 +119,13 @@ export function SummaryEditor({ projectId }: { projectId: string }) {
         AI drafts from chat appear below. Only text you enter or confirm counts as your
         requirement (DIR §2.2).
       </p>
+      {status !== "approved" && (
+        <p>
+          <button type="button" disabled={filling} onClick={fillFromChat}>
+            {filling ? "Filling from chat…" : "Fill from chat"}
+          </button>
+        </p>
+      )}
       {SUMMARY_FIELD_KEYS.map((key) => {
         const draft = fields[key]?.ai_proposed;
         const confirmed = fields[key]?.customer_confirmed;
