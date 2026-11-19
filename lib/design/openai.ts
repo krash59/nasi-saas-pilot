@@ -3,10 +3,16 @@ import { SUMMARY_FIELD_KEYS, type SummaryFields } from "@/lib/design/summary-fie
 import type { FieldProposals } from "@/lib/design/summary-extract";
 import { extractFieldProposals } from "@/lib/design/summary-extract";
 
-const FIELD_GUIDE = `Summary areas (keys): problem_statement, users_personas, must_have_features, out_of_scope, constraints, open_questions.
+const FIELD_GUIDE = `Summary areas (keys) and what counts for each:
+- problem_statement: the problem or goal the customer wants the app to solve.
+- users_personas: every person, role or group the customer says will use or benefit from the app (e.g. "staff", "patients", "managers"), even if mentioned in passing.
+- must_have_features: features or capabilities the customer needs or asks for.
+- out_of_scope: things the customer says to leave out, avoid, or postpone.
+- constraints: budget, timeline, team, technology, legal or other limits the customer mentions.
+- open_questions: questions or uncertainties the customer raised that are not yet settled.
 For EVERY area, write a complete, up-to-date draft that summarises everything the customer has said about it anywhere in the
-conversation so far (not only the latest message), in the customer's own terms; use null only when the customer has said nothing
-about that area yet. Never invent requirements the customer did not state.`;
+conversation so far (not only the latest message, and not only the current focus), in the customer's own terms. Use null only when
+the customer has said nothing that fits that area. Never invent requirements the customer did not state.`;
 
 const SYSTEM_PROMPT = `You are an experienced software design consultant helping a non-technical customer shape their app idea.
 Use TurboTax-style guidance: one focused question at a time, plain language, no jargon.
