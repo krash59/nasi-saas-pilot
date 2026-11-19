@@ -27,13 +27,11 @@ describe("BDD_F03_01 In-dashboard GPT design talk", () => {
     expect(proposals.problem_statement).toContain("nonprofits");
   });
 
-  it("stub reply produces AI_DRAFT proposals for offline verification", () => {
-    const out = generateDesignAssistantReplyStub(
-      [{ role: "customer", content: "I need a volunteer tracker" }],
-      { fieldsSnapshot: emptySummaryFields() },
-    );
+  it("stub reply is an AI draft that ends with the fixed question for the next area", () => {
+    const out = generateDesignAssistantReplyStub([{ role: "customer", content: "I need a volunteer tracker" }], "users_personas");
     expect(out.isAiDraft).toBe(true);
-    expect(out.proposals.problem_statement).toBeTruthy();
+    expect(out.content.endsWith("Who will use the app or benefit from it, and what does each of them do with it?")).toBe(true);
+    expect(out).not.toHaveProperty("proposals");
   });
 });
 

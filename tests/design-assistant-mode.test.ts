@@ -3,7 +3,6 @@ import {
   generateDesignAssistantReply,
   getDesignAssistantMode,
 } from "@/lib/design/openai";
-import { emptySummaryFields } from "@/lib/design/summary-fields";
 
 describe("design assistant provider mode", () => {
   afterEach(() => {
@@ -20,12 +19,13 @@ describe("design assistant provider mode", () => {
 
     const result = await generateDesignAssistantReply(
       [{ role: "customer", content: "A fictional bakery site" }],
-      { fieldsSnapshot: emptySummaryFields() },
+      "problem_statement",
     );
 
     expect(getDesignAssistantMode()).toBe("local_stub");
     expect(result.isAiDraft).toBe(true);
-    expect(result.proposals.problem_statement).toContain("fictional bakery");
+    expect(result.content).toContain("fictional bakery");
+    expect(result.content).toContain("What problem should the app solve?");
     expect(fetch).not.toHaveBeenCalled();
   });
 
@@ -34,7 +34,7 @@ describe("design assistant provider mode", () => {
     vi.stubEnv("NASI_DESIGN_ASSISTANT_MODE", "stub");
 
     expect(() => getDesignAssistantMode()).toThrow("LOCAL_STUB_MODE_REQUIRES_DEVELOPMENT");
-    await expect(generateDesignAssistantReply([])).rejects.toThrow(
+    await expect(generateDesignAssistantReply([], "problem_statement")).rejects.toThrow(
       "LOCAL_STUB_MODE_REQUIRES_DEVELOPMENT",
     );
   });
@@ -44,7 +44,7 @@ describe("design assistant provider mode", () => {
     vi.stubEnv("OPENAI_API_KEY", "");
 
     expect(getDesignAssistantMode()).toBe("openai");
-    await expect(generateDesignAssistantReply([])).rejects.toThrow(
+    await expect(generateDesignAssistantReply([], "problem_statement")).rejects.toThrow(
       "OPENAI_API_KEY not configured",
     );
   });

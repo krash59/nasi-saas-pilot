@@ -1,6 +1,7 @@
 "use client";
 
-import { SCAFFOLD_LABELS, getNextScaffoldFocus } from "@/lib/design/scaffolding";
+import { SCAFFOLD_LABELS } from "@/lib/design/scaffolding";
+import type { ChatCapture } from "@/lib/design/capture";
 import { formatTranscript, transcriptFileName } from "@/lib/design/transcript";
 import type { SummaryFields } from "@/lib/design/summary-fields";
 import { useEffect, useState } from "react";
@@ -14,6 +15,7 @@ export function DesignChat({ projectId }: { projectId: string }) {
   const [chatOpen, setChatOpen] = useState(true);
   const [editing, setEditing] = useState<{ id: string; text: string } | null>(null);
   const [fields, setFields] = useState<SummaryFields | null>(null);
+  const [capture, setCapture] = useState<ChatCapture | null>(null);
   const [assistantMode, setAssistantMode] = useState<"openai" | "local_stub">("openai");
   const [input, setInput] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -30,6 +32,7 @@ export function DesignChat({ projectId }: { projectId: string }) {
     setMessages(d.messages ?? []);
     if (d.assistantMode) setAssistantMode(d.assistantMode);
     if (d.fields) setFields(d.fields);
+    if (d.capture) setCapture(d.capture);
     if (typeof d.projectName === "string") setProjectName(d.projectName);
     if (typeof d.chatOpen === "boolean") setChatOpen(d.chatOpen);
   }
@@ -69,7 +72,8 @@ export function DesignChat({ projectId }: { projectId: string }) {
     loadConversation().catch(() => setError("Could not load messages"));
   }, [projectId]);
 
-  const focus = fields ? getNextScaffoldFocus(fields) : null;
+  const FOCUS_LABELS: Record<string, string> = { ...SCAFFOLD_LABELS, original_description: "your app idea", decisions: "decisions, changes and notes" };
+  const focus = capture ? capture.next_focus : null;
 
   async function send() {
     if (!input.trim()) return;
@@ -89,6 +93,7 @@ export function DesignChat({ projectId }: { projectId: string }) {
     setMessages(data.messages ?? []);
     if (data.assistantMode) setAssistantMode(data.assistantMode);
     if (data.fields) setFields(data.fields);
+    if (data.capture) setCapture(data.capture);
     setInput("");
   }
 
@@ -107,7 +112,7 @@ export function DesignChat({ projectId }: { projectId: string }) {
       )}
       {focus && (
         <p style={{ fontSize: 14, color: "#444" }}>
-          Guided focus: <strong>{SCAFFOLD_LABELS[focus]}</strong> — saved as you chat; confirm on
+          Guided focus: <strong>{FOCUS_LABELS[focus]}</strong> — saved as you chat; confirm on
           the summary page.
         </p>
       )}

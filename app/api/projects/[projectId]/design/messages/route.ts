@@ -7,11 +7,11 @@ import {
   getProjectStageInfo,
   getSummaryFields,
   listDesignMessages,
-  mergeAiProposedFields,
   reviseDesignMessage,
 } from "@/lib/design/repository";
 import { generateDesignAssistantReply, getDesignAssistantMode } from "@/lib/design/openai";
 import { historyForAssistant } from "@/lib/design/history";
+import { captureFromMessages, type CaptureRow } from "@/lib/design/capture";
 import { assertDesignTokensAvailable, recordProjectUsage } from "@/lib/usage/repository";
 import { UsageCapExceededError } from "@/lib/usage/meters";
 import { z } from "zod";
@@ -26,7 +26,7 @@ export async function GET(_req: Request, ctx: Ctx) {
     const messages = await ensureDesignConversationStarted(projectId);
     const fields = await getSummaryFields(projectId);
     const stage = await getProjectStageInfo(projectId);
-    return NextResponse.json({ messages, fields, assistantMode: getDesignAssistantMode(), projectName: project.name,
+    return NextResponse.json({ messages, fields, capture: captureFromMessages(messages as CaptureRow[]), assistantMode: getDesignAssistantMode(), projectName: project.name,
       designVersion: project.design_version, chatOpen: stage?.summary_status !== "approved" });
   } catch (error) {
     if (error instanceof Error && error.message === "UNAUTHENTICATED") {
@@ -52,16 +52,15 @@ export async function POST(req: Request, ctx: Ctx) {
     const prior = await listDesignMessages(projectId);
     // DC-01: the AI receives only the current version of each message, never withdrawn or superseded text.
     const history = historyForAssistant(prior as { role: string; content: string; withdrawn_at?: unknown }[]);
-    const fieldsSnapshot = await getSummaryFields(projectId);
-
-    const reply = await generateDesignAssistantReply(history, { fieldsSnapshot });
+    // Deterministic capture decides the next area; the AI reply is shown only, never stored as a requirement.
+    const focus = captureFromMessages(prior as CaptureRow[]).next_focus;
+    const reply = await generateDesignAssistantReply(history, focus);
     await recordProjectUsage(projectId, "design_tokens", reply.tokensUsed, `design_chat:${getDesignAssistantMode()}`);
     await appendDesignMessage(projectId, "assistant", reply.content, reply.isAiDraft);
-    await mergeAiProposedFields(projectId, reply.proposals);
 
     const messages = await listDesignMessages(projectId);
     const fields = await getSummaryFields(projectId);
-    return NextResponse.json({ messages, fields, assistantMode: getDesignAssistantMode() });
+    return NextResponse.json({ messages, fields, capture: captureFromMessages(messages as CaptureRow[]), assistantMode: getDesignAssistantMode() });
   } catch (e) {
     if (e instanceof UsageCapExceededError) {
       return NextResponse.json(

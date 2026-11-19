@@ -6,12 +6,8 @@ import {
   getProjectForCustomer,
   getProjectStageInfo,
   listDesignMessages,
-  mergeAiProposedFields,
 } from "@/lib/design/repository";
-import { historyForAssistant } from "@/lib/design/history";
-import { draftSummaryFromConversation, getDesignAssistantMode } from "@/lib/design/openai";
-import { assertDesignTokensAvailable, recordProjectUsage } from "@/lib/usage/repository";
-import { UsageCapExceededError } from "@/lib/usage/meters";
+import { captureFromMessages, type CaptureRow } from "@/lib/design/capture";
 import { SUMMARY_FIELD_KEYS, type SummaryFieldKey } from "@/lib/design/summary-fields";
 import { denyAgenticWithoutApprovedSummary } from "@/lib/design/stage-gate";
 import { z } from "zod";
@@ -29,8 +25,10 @@ export async function GET(_req: Request, ctx: Ctx) {
   }
   const summary = await getOrCreateSummary(projectId);
   const stage = await getProjectStageInfo(projectId);
+  const capture = captureFromMessages((await listDesignMessages(projectId)) as CaptureRow[]);
   return NextResponse.json({
     summary,
+    capture,
     stage,
     agenticBlocked: true,
     implementationConsentRequired: true,
@@ -74,17 +72,21 @@ export async function POST(req: Request, ctx: Ctx) {
       }
     }
     if (action === "fill_from_chat") {
-      // AI drafts for every unconfirmed area from the whole conversation; confirmed text is never touched.
+      // Deterministic: copies the customer's OWN chat answers, word for word, into fields they have not filled yet.
+      // No AI call; fields the customer already confirmed are never touched.
       fillSchema.parse(body);
-      const summary = (await getOrCreateSummary(projectId)) as { status?: string };
+      const summary = (await getOrCreateSummary(projectId)) as { status?: string; fields?: Record<string, { customer_confirmed?: string | null }> };
       if (summary.status === "approved") throw new Error("SUMMARY_ALREADY_APPROVED");
-      await assertDesignTokensAvailable();
-      const rows = await listDesignMessages(projectId);
-      const history = historyForAssistant(rows as { role: string; content: string; withdrawn_at?: unknown }[]);
-      const { proposals, tokensUsed } = await draftSummaryFromConversation(history);
-      if (tokensUsed > 0) await recordProjectUsage(projectId, "design_tokens", tokensUsed, `summary_fill:${getDesignAssistantMode()}`);
-      const fields = await mergeAiProposedFields(projectId, proposals);
-      return NextResponse.json({ fields, filled: Object.keys(proposals) });
+      const capture = captureFromMessages((await listDesignMessages(projectId)) as CaptureRow[]);
+      const filled: SummaryFieldKey[] = [];
+      let fields: unknown = summary.fields;
+      for (const key of SUMMARY_FIELD_KEYS) {
+        const answer = capture.answers[key];
+        if (!answer || summary.fields?.[key]?.customer_confirmed?.trim()) continue;
+        fields = await confirmSummaryField(projectId, key, answer, undefined);
+        filled.push(key);
+      }
+      return NextResponse.json({ fields, filled, capture });
     }
     const parsed = confirmSchema.parse(body);
     const fields = await confirmSummaryField(
@@ -95,16 +97,10 @@ export async function POST(req: Request, ctx: Ctx) {
     );
     return NextResponse.json({ fields });
   } catch (e) {
-    if (e instanceof UsageCapExceededError) {
-      return NextResponse.json({ error: "USAGE_CAP_EXCEEDED", meter: e.meter, used: e.used, limit: e.limit }, { status: 429 });
-    }
     const msg = e instanceof Error ? e.message : "";
     if (msg === "UNAUTHENTICATED") return NextResponse.json({ error: msg }, { status: 401 });
     if (e instanceof z.ZodError || e instanceof SyntaxError) {
       return NextResponse.json({ error: "INVALID_SUMMARY_REQUEST" }, { status: 400 });
-    }
-    if (msg.includes("OPENAI") || msg.startsWith("OpenAI error") || msg === "Empty model response") {
-      return NextResponse.json({ error: "DESIGN_ASSISTANT_UNAVAILABLE" }, { status: 503 });
     }
     if (["FIELDS_NOT_CONFIRMED", "SUMMARY_NOT_FOUND", "SUMMARY_ALREADY_APPROVED"].includes(msg)) {
       return NextResponse.json({ error: msg }, { status: 400 });

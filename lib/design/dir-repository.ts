@@ -1,3 +1,4 @@
+import { captureFromMessages, type CaptureRow } from "@/lib/design/capture";
 import { getSql, withCustomerContext } from "@/lib/db/client";
 import { requireCustomer } from "@/lib/tenant/customer";
 import { buildDirDraft } from "./dir-draft";
@@ -20,7 +21,10 @@ export async function generateDirDraft(projectId: string) {
       WHERE p.id = ${projectId}::uuid AND p.customer_id = ${customer.id}::uuid`;
     if (!rows.length) throw new Error("DESIGN_SUMMARY_NOT_APPROVED");
     const summary = rows[0] as { fields: SummaryFields; status: string; approved_at: unknown };
-    const content = buildDirDraft(summary);
+    // The chat is closed once the summary is approved, so the capture is fixed: same messages -> same DIR.
+    const messages = await tx`SELECT role, content, is_ai_draft, withdrawn_at FROM design_messages
+      WHERE project_id = ${projectId}::uuid ORDER BY created_at ASC`;
+    const content = buildDirDraft(summary, captureFromMessages(messages as unknown as CaptureRow[]));
     // Insertion and stage transition commit together. A retry preserves the original draft.
     const result = await tx`WITH draft AS (
       INSERT INTO dir_drafts (project_id, customer_id, content, source_summary, source_approved_at, generated_by)
