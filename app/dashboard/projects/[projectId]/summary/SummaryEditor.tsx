@@ -5,6 +5,7 @@ import ReviseDesign from "../ReviseDesign";
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useAuthenticatedApiFetch } from "@/lib/providers/use-authenticated-api-fetch";
+import { IntakeReview } from "./IntakeReview";
 
 const LABELS: Record<string, string> = {
   problem_statement: "Problem statement",
@@ -22,7 +23,7 @@ export function SummaryEditor({ projectId }: { projectId: string }) {
   const [status, setStatus] = useState("draft");
   const [msg, setMsg] = useState<string | null>(null);
   const [generating, setGenerating] = useState(false);
-  const [filling, setFilling] = useState(false);
+  const [mode, setMode] = useState<"v3" | "legacy" | null>(null);
   const apiFetch = useAuthenticatedApiFetch();
 
   async function generateDir() {
@@ -38,34 +39,13 @@ export function SummaryEditor({ projectId }: { projectId: string }) {
     }
   }
 
-  /** Asks the AI to draft every unconfirmed area from the whole design chat. Drafts still need your confirmation. */
-  async function fillFromChat() {
-    setFilling(true);
-    try {
-      const res = await apiFetch(`/api/projects/${projectId}/design/summary`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "fill_from_chat" }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        setMsg(data.error);
-        return;
-      }
-      setMsg(data.filled?.length ? "AI drafts filled from your chat. Review each one, then confirm it." : "The chat has nothing new to draft yet.");
-      await load();
-    } catch {
-      setMsg("Could not fill from chat. Please retry.");
-    } finally {
-      setFilling(false);
-    }
-  }
-
   async function load() {
     const res = await apiFetch(`/api/projects/${projectId}/design/summary`);
     const data = await res.json();
     if (data.summary?.fields) setFields(data.summary.fields);
     if (data.summary?.status) setStatus(data.summary.status);
+    const im = await apiFetch(`/api/projects/${projectId}/intake`);
+    if (im.ok) setMode((await im.json()).mode);
   }
 
   useEffect(() => {
@@ -110,6 +90,16 @@ export function SummaryEditor({ projectId }: { projectId: string }) {
     await load();
   }
 
+  if (mode === null) return <p>Loading…</p>;
+  if (mode === "v3") return (
+    <div>
+      <p>Status: <strong>{status}</strong></p>
+      <IntakeReview projectId={projectId} status={status} onChanged={load} />
+      {status === "approved" && <button type="button" disabled={generating} onClick={generateDir}>
+        {generating ? "Generating…" : "Generate / recover DIR draft"}</button>}
+      {msg && <p role="status">{msg}</p>}
+    </div>
+  );
   return (
     <div>
       <p>
@@ -119,13 +109,7 @@ export function SummaryEditor({ projectId }: { projectId: string }) {
         AI drafts from chat appear below. Only text you enter or confirm counts as your
         requirement (DIR §2.2).
       </p>
-      {status !== "approved" && (
-        <p>
-          <button type="button" disabled={filling} onClick={fillFromChat}>
-            {filling ? "Filling from chat…" : "Fill from chat"}
-          </button>
-        </p>
-      )}
+
       {SUMMARY_FIELD_KEYS.map((key) => {
         const draft = fields[key]?.ai_proposed;
         const confirmed = fields[key]?.customer_confirmed;

@@ -19,7 +19,14 @@ export type Story = {
 type Section = { key?: string; content?: unknown };
 
 const text = (v: unknown) => (typeof v === "string" ? v.trim() : "");
-const clean = (l: string) => l.replace(/^[-*\u2022\d.)\s]+/, "").trim();
+const clean = (l: string) => l.replace(/^[-*\u2022\d.)\s]+/, "").replace(/\*\*/g, "").trim();
+/** Deterministic list rule: if the text has bullet or numbered lines, only those are items (intro and closing sentences
+ * are explanation, not features); otherwise every line or ";"-separated part is an item. */
+const BULLET = /^\s*(?:[-*\u2022]|\d+[.)])\s+/;
+const items = (s: string) => {
+  const bullets = s.split(/\r?\n/).filter((l) => BULLET.test(l));
+  return bullets.length ? bullets.map(clean).filter(Boolean) : lines(s);
+};
 const lines = (s: string) => s.split(/\r?\n|;/).map(clean).filter(Boolean);
 const STOP = new Set(["the", "and", "for", "with", "that", "this", "their", "they", "them", "from", "into", "have", "will",
   "can", "are", "was", "who", "our", "your", "you", "all", "any", "not", "but", "use", "using", "able", "need", "needs", "want"]);
@@ -56,12 +63,12 @@ const MEASURABLE = /\b\d+(?:\.\d+)?\s*(?:ms|milliseconds?|s|sec|seconds?|minutes
 export function storiesFromDir(content: unknown): Story[] {
   const sections = (content as { sections?: Section[] } | null)?.sections ?? [];
   const get = (k: string) => text(sections.find(s => s?.key === k)?.content);
-  const features = lines(get("must_have_features")).map(featureFrom).slice(0, 50);
+  const features = items(get("must_have_features")).map(featureFrom).slice(0, 50);
   if (!features.length) throw new Error("DIR_HAS_NO_FEATURES");
   const personas = personasFrom(get("users_personas"));
   if (!personas.length) personas.push({ name: "customer user", words: new Set(), ref: "users_personas" });
   const problems = sentences(get("problem_statement"));
-  const outOfScope = lines(get("out_of_scope")).filter(l => !/^(none|n\/a|nothing)$/i.test(l));
+  const outOfScope = items(get("out_of_scope")).filter(l => !/^(none|n\/a|nothing)$/i.test(l));
   const measurable = lines(get("constraints")).filter(l => MEASURABLE.test(l));
 
   return features.map(({ feature, benefit }, i) => {

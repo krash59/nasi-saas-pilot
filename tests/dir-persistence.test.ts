@@ -35,6 +35,7 @@ describe.skipIf(!url)("DIR persistence and RLS (real PostgreSQL)", () => {
     await state.client.query(`CREATE ROLE ${role} NOLOGIN NOSUPERUSER NOBYPASSRLS`);
     await state.client.query(`GRANT USAGE ON SCHEMA public TO ${role}`);
     await state.client.query(`GRANT SELECT, INSERT, UPDATE, DELETE ON projects, design_summaries, dir_drafts TO ${role}`);
+    await state.client.query(`GRANT SELECT ON intake_events TO ${role}`); // v3: the DIR reads the customer's intake log
     await state.client.query("INSERT INTO customers(id, clerk_user_id) VALUES ($1,$3),($2,$4)", [a,b,`dir-a-${a}`,`dir-b-${b}`]);
     await state.client.query("SELECT set_config('app.current_customer_id', $1, true)", [a]);
     await state.client.query("INSERT INTO projects(id,customer_id,name) VALUES ($1,$2,'DIR verification')", [project,a]);
