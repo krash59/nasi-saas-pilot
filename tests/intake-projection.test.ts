@@ -51,7 +51,9 @@ describe("intake projection (deterministic)", () => {
   it("C02: settled questions leave Open questions and appear as decisions in the customer's words", () => {
     const v = projectIntake(settledAndConfirmed());
     expect(v.gate).toEqual({ pass: true, issues: [] });
-    expect(renderSummaryFields(v).open_questions).toMatch(/^None open/);
+    const oq = renderSummaryFields(v).open_questions;
+    expect(oq.startsWith("* Should drafts use live order status?\n* One model or two?")).toBe(true);
+    expect(oq.match(/: settled \(see Decisions\)/g)).toHaveLength(2);
     const dec = renderDirExtras(v).find((s) => s.key === "decisions")!;
     expect(dec.content).toContain("Decision: Decided: Should drafts use live order status?");
   });
@@ -128,8 +130,8 @@ describe("intake projection (deterministic)", () => {
     const v = projectIntake(settledAndConfirmed());
     const customer = settledAndConfirmed().map((e) => e.verbatim_text).filter(Boolean).join("\n");
     for (const value of Object.values(renderSummaryFields(v))) {
-      const residue = value.split("\n").map((l) => l.replace(/^(- |  Open because \(customer\): )/, "").replace(/^[A-Za-z ,]+:$/, "").trim())
-        .filter((l) => l && !customer.includes(l) && !/^None open\.|^None \(stated/.test(l));
+      const residue = value.split("\n").map((l) => l.replace(/^- /, "").replace(/: (settled \(see Decisions\)|still open.*|status not set)$/, "").replace(/^[A-Za-z ,]+:$/, "").trim())
+        .filter((l) => l && !customer.includes(l) && !/^None \(stated/.test(l));
       expect(residue).toEqual([]);
     }
   });
@@ -137,5 +139,16 @@ describe("intake projection (deterministic)", () => {
   it("splitItems keeps bullet lines verbatim and drops intro/outro sentences", () => {
     expect(splitItems(MUST)).toEqual(["**Classification:** topic, urgency, language, sentiment, order numbers", "Routing with Slack alerts"]);
     expect(splitItems("one\ntwo")).toEqual(["one", "two"]);
+  });
+
+  it("C17: lossless: every customer answer appears in full in its field, whatever its format (tables, headings, plain text)", () => {
+    seq = 0;
+    const odd = "### Delivery specs\n\n| Parameter | Requirement |\n| --- | --- |\n| **Timeline** | 2-3 weeks |\n\n---\n\n1. **Milestone 1**\n* Deliverables: repo\nClosing sentence.";
+    const evs: IntakeEvent[] = [];
+    QUESTION_IDS.forEach((q, i) => { evs.push(answer(q, `n${i}`, `${q}:\n${odd}`)); evs.push(next(q)); });
+    const v = projectIntake(evs), f = renderSummaryFields(v), x = renderDirExtras(v);
+    const all = Object.values(f).join("\n") + x.map((s) => s.content).join("\n");
+    for (const q of QUESTION_IDS) expect(all).toContain(`${q}:\n${odd}`);
+    expect(f.open_questions).toContain("| **Timeline** | 2-3 weeks |");
   });
 });

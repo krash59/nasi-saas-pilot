@@ -158,11 +158,13 @@ export function renderSummaryFields(view: IntakeView): Record<SummaryFieldKey, s
   const out = {} as Record<SummaryFieldKey, string>;
   for (const key of SUMMARY_FIELD_KEYS) {
     if (key === "open_questions") {
-      const open = view.open_items.filter((i) => i.status === "OPEN");
+      // Lossless (owner rule; found 2026-11-20 when a table and headings were dropped): the field is the customer's FULL
+      // answer word for word, then a fixed-template status line per item. The item split only drives the status list.
       const q = view.questions.find((x) => x.id === "q11_open_questions")!;
-      out[key] = q.state === "none" ? NONE_TEXT
-        : open.length ? open.map((i) => `- ${i.text}${i.note ? `\n  Open because (customer): ${i.note}` : ""}`).join("\n")
-        : "None open. Every question the customer raised is settled (see Decisions).";
+      if (q.state === "none") { out[key] = NONE_TEXT; continue; }
+      const status = (i: OpenItem) => i.status === "SETTLED" ? "settled (see Decisions)"
+        : i.status === "OPEN" ? `still open${i.note ? ` (customer: ${i.note})` : ""}` : "status not set";
+      out[key] = `${body(q)}\n\nStatus set by the customer:\n${view.open_items.map((i) => `- ${i.text}: ${status(i)}`).join("\n")}`;
       continue;
     }
     const qs = view.questions.filter((x) => x.field === key);
