@@ -1,20 +1,22 @@
 import { NextResponse } from "next/server";
 import {
-  appendDesignMessage,
   assertDesignChatOpen,
   ensureDesignConversationStarted,
   getProjectForCustomer,
   getProjectStageInfo,
   getSummaryFields,
   listDesignMessages,
-  mergeAiProposedFields,
   reviseDesignMessage,
 } from "@/lib/design/repository";
-import { generateDesignAssistantReply, getDesignAssistantMode } from "@/lib/design/openai";
-import { historyForAssistant } from "@/lib/design/history";
-import { assertDesignTokensAvailable, recordProjectUsage } from "@/lib/usage/repository";
-import { UsageCapExceededError } from "@/lib/usage/meters";
+import { appendIntakeEventsTx, intakeModeTx, withIntake } from "@/lib/intake/repository";
+import { ACK_TEXT, isBareNegative } from "@/lib/intake/protocol";
 import { z } from "zod";
+
+/**
+ * Design chat, fully deterministic (owner rule 2026-11-19): no AI call. A customer message is stored word for word and,
+ * for intake-v3 projects, bound to the question that is active when it arrives; the reply is fixed text.
+ */
+const ASSISTANT_MODE = "deterministic";
 
 type Ctx = { params: Promise<{ projectId: string }> };
 
@@ -26,7 +28,8 @@ export async function GET(_req: Request, ctx: Ctx) {
     const messages = await ensureDesignConversationStarted(projectId);
     const fields = await getSummaryFields(projectId);
     const stage = await getProjectStageInfo(projectId);
-    return NextResponse.json({ messages, fields, assistantMode: getDesignAssistantMode(), projectName: project.name,
+    const intake = await withIntake(projectId, async (tx, _c, view) => ({ mode: await intakeModeTx(tx, projectId), view }));
+    return NextResponse.json({ messages, fields, intake, assistantMode: ASSISTANT_MODE, projectName: project.name,
       designVersion: project.design_version, chatOpen: stage?.summary_status !== "approved" });
   } catch (error) {
     if (error instanceof Error && error.message === "UNAUTHENTICATED") {
@@ -36,7 +39,10 @@ export async function GET(_req: Request, ctx: Ctx) {
   }
 }
 
-const postSchema = z.object({ message: z.string().min(1).max(8000) }).strict();
+// question_id: the question the customer saw when typing (expected version). A mismatch is refused, never re-bound.
+const postSchema = z.object({ message: z.string().min(1).max(8000), question_id: z.string().max(64).optional() }).strict();
+
+class Refusal extends Error { constructor(public code: string, public status = 409) { super(code); } }
 
 export async function POST(req: Request, ctx: Ctx) {
   try {
@@ -44,31 +50,29 @@ export async function POST(req: Request, ctx: Ctx) {
     const project = await getProjectForCustomer(projectId);
     if (!project) return NextResponse.json({ error: "NOT_FOUND" }, { status: 404 });
     await assertDesignChatOpen(projectId);
-    const { message } = postSchema.parse(await req.json());
-    // BDD_F10_02: at or over the monthly token cap, refuse before storing or calling the model.
-    await assertDesignTokensAvailable();
-    await appendDesignMessage(projectId, "customer", message, false);
-
-    const prior = await listDesignMessages(projectId);
-    // DC-01: the AI receives only the current version of each message, never withdrawn or superseded text.
-    const history = historyForAssistant(prior as { role: string; content: string; withdrawn_at?: unknown }[]);
-    const fieldsSnapshot = await getSummaryFields(projectId);
-
-    const reply = await generateDesignAssistantReply(history, { fieldsSnapshot });
-    await recordProjectUsage(projectId, "design_tokens", reply.tokensUsed, `design_chat:${getDesignAssistantMode()}`);
-    await appendDesignMessage(projectId, "assistant", reply.content, reply.isAiDraft);
-    await mergeAiProposedFields(projectId, reply.proposals);
-
+    const { message, question_id: expectedQuestion } = postSchema.parse(await req.json());
+    const intake = await withIntake(projectId, async (tx, customerId, view) => {
+      const mode = await intakeModeTx(tx, projectId);
+      if (mode === "v3") {
+        if (isBareNegative(message)) throw new Refusal("USE_NONE_BUTTON", 400);
+        if (!view.active_question_id) throw new Refusal("INTAKE_COMPLETE_USE_SUMMARY_PAGE");
+        if (expectedQuestion && expectedQuestion !== view.active_question_id) throw new Refusal("QUESTION_CHANGED_RELOAD");
+      }
+      const ins = await tx`INSERT INTO design_messages (project_id, role, content, is_ai_draft)
+        VALUES (${projectId}::uuid, 'customer', ${message}, false) RETURNING id`;
+      const after = mode === "v3"
+        ? await appendIntakeEventsTx(tx, projectId, customerId, [{ event_type: "AnswerGiven", question_id: view.active_question_id,
+            message_id: String((ins[0] as { id: string }).id), verbatim_text: message }])
+        : view;
+      await tx`INSERT INTO design_messages (project_id, role, content, is_ai_draft)
+        VALUES (${projectId}::uuid, 'assistant', ${ACK_TEXT}, false)`;
+      return { mode, view: after };
+    });
     const messages = await listDesignMessages(projectId);
     const fields = await getSummaryFields(projectId);
-    return NextResponse.json({ messages, fields, assistantMode: getDesignAssistantMode() });
+    return NextResponse.json({ messages, fields, intake, assistantMode: ASSISTANT_MODE });
   } catch (e) {
-    if (e instanceof UsageCapExceededError) {
-      return NextResponse.json(
-        { error: "USAGE_CAP_EXCEEDED", meter: e.meter, used: e.used, limit: e.limit },
-        { status: 429 },
-      );
-    }
+    if (e instanceof Refusal) return NextResponse.json({ error: e.code }, { status: e.status });
     const msg = e instanceof Error ? e.message : "Error";
     if (msg === "DESIGN_DISCUSSION_CLOSED") {
       return NextResponse.json({ error: msg }, { status: 409 });
@@ -76,9 +80,6 @@ export async function POST(req: Request, ctx: Ctx) {
     if (msg === "UNAUTHENTICATED") return NextResponse.json({ error: msg }, { status: 401 });
     if (e instanceof z.ZodError || e instanceof SyntaxError) {
       return NextResponse.json({ error: "INVALID_DESIGN_MESSAGE" }, { status: 400 });
-    }
-    if (msg.includes("OPENAI")) {
-      return NextResponse.json({ error: "DESIGN_ASSISTANT_UNAVAILABLE" }, { status: 503 });
     }
     return NextResponse.json({ error: "DESIGN_MESSAGE_FAILED" }, { status: 500 });
   }
@@ -96,9 +97,20 @@ export async function PATCH(req: Request, ctx: Ctx) {
     z.string().uuid().parse(projectId);
     if (!(await getProjectForCustomer(projectId))) return NextResponse.json({ error: "NOT_FOUND" }, { status: 404 });
     const body = patchSchema.parse(await req.json());
+    if (body.action === "edit" && isBareNegative(body.content)) return NextResponse.json({ error: "USE_NONE_BUTTON" }, { status: 400 });
+    // The edit/withdraw and its intake event commit in one transaction (R12): a confirmed answer then needs re-check.
     const messages = await reviseDesignMessage(projectId, body.messageId,
-      body.action === "edit" ? { action: "edit", content: body.content } : { action: "withdraw" });
-    return NextResponse.json({ messages, assistantMode: getDesignAssistantMode() });
+      body.action === "edit" ? { action: "edit", content: body.content } : { action: "withdraw" },
+      async (tx, customerId) => {
+        if ((await intakeModeTx(tx, projectId)) !== "v3") return;
+        const bound = await tx`SELECT 1 FROM intake_events WHERE project_id = ${projectId}::uuid
+          AND event_type = 'AnswerGiven' AND message_id = ${body.messageId}::uuid`;
+        if (!bound.length) return;
+        await appendIntakeEventsTx(tx, projectId, customerId, [body.action === "edit"
+          ? { event_type: "AnswerAmended", message_id: body.messageId, verbatim_text: body.content }
+          : { event_type: "AnswerWithdrawn", message_id: body.messageId }]);
+      });
+    return NextResponse.json({ messages, assistantMode: ASSISTANT_MODE });
   } catch (e) {
     const msg = e instanceof Error ? e.message : "";
     if (msg === "UNAUTHENTICATED") return NextResponse.json({ error: msg }, { status: 401 });

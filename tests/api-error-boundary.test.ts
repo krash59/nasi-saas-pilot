@@ -5,6 +5,12 @@ vi.mock('@/lib/design/repository',()=>({getProjectForCustomer:m.project,appendDe
 vi.mock('@/lib/design/openai',()=>({generateDesignAssistantReply:m.reply,getDesignAssistantMode:()=>"openai"}));
 vi.mock('@/lib/usage/repository',()=>({assertDesignTokensAvailable:m.cap,recordProjectUsage:m.meter}));
 vi.mock('@/lib/design/dir-repository',()=>({generateDirDraft:vi.fn()}));
+const ix=vi.hoisted(()=>({fail:'',mode:'legacy',sql:[] as string[],view:{active_question_id:'q02_problem',questions:[],open_items:[],gate:{pass:false,issues:[]}}}));
+vi.mock('@/lib/intake/repository',()=>({
+  withIntake:async(_p:string,fn:(tx:unknown,c:string,v:unknown,e:unknown[])=>unknown)=>fn(Object.assign((strs:TemplateStringsArray)=>{ix.sql.push(strs.join('?'));if(ix.fail)return Promise.reject(new Error(ix.fail));return Promise.resolve([{id:'00000000-0000-0000-0000-000000000001'}]);},{}),'cust',ix.view,[]),
+  intakeModeTx:async()=>ix.mode,
+  appendIntakeEventsTx:vi.fn(async()=>ix.view),
+}));
 vi.mock('@/lib/design/implementation-consent',()=>({authorizeImplementation:vi.fn()}));
 import {UsageCapExceededError} from '@/lib/usage/meters';
 import {POST as projectPost} from '@/app/api/projects/route';
@@ -21,12 +27,12 @@ describe('Customer API failure and authority boundaries',()=>{
  it('sanitizes message read failures',async()=>{m.conversation.mockRejectedValue(new Error(detail));const r=await messagesGet(new Request('http://localhost'),ctx);expect(r.status).toBe(500);expect(await r.json()).toEqual({error:'DESIGN_MESSAGES_READ_FAILED'});});
  it('handles message-read authentication',async()=>{m.project.mockRejectedValue(new Error('UNAUTHENTICATED'));expect((await messagesGet(new Request('http://localhost'),ctx)).status).toBe(401);});
  it('denies another tenant before reading messages',async()=>{m.project.mockResolvedValue(null);expect((await messagesGet(new Request('http://localhost'),ctx)).status).toBe(404);expect(m.conversation).not.toHaveBeenCalled();});
- it('sanitizes message persistence failures',async()=>{m.append.mockRejectedValue(new Error(detail));const r=await messagesPost(req({message:'hello'}),ctx);expect(r.status).toBe(500);expect(await r.json()).toEqual({error:'DESIGN_MESSAGE_FAILED'});});
- it('sanitizes assistant provider failures',async()=>{m.reply.mockRejectedValue(new Error('OPENAI '+detail));const r=await messagesPost(req({message:'hello'}),ctx);expect(r.status).toBe(503);expect(await r.json()).toEqual({error:'DESIGN_ASSISTANT_UNAVAILABLE'});});
+ it('sanitizes message persistence failures',async()=>{ix.fail=detail;const r=await messagesPost(req({message:'hello'}),ctx);ix.fail='';expect(r.status).toBe(500);expect(await r.json()).toEqual({error:'DESIGN_MESSAGE_FAILED'});});
+ it('chat makes no AI call and stores the customer words plus a fixed reply',async()=>{ix.sql=[];const r=await messagesPost(req({message:'hello'}),ctx);expect(r.status).toBe(200);expect(m.reply).not.toHaveBeenCalled();expect(m.meter).not.toHaveBeenCalled();expect(ix.sql.filter(q=>q.includes('INSERT INTO design_messages'))).toHaveLength(2);expect((await r.json()).assistantMode).toBe('deterministic');});
  it('preserves closed-discussion conflict',async()=>{m.open.mockRejectedValue(new Error('DESIGN_DISCUSSION_CLOSED'));expect((await messagesPost(req({message:'hello'}),ctx)).status).toBe(409);expect(m.append).not.toHaveBeenCalled();});
  it('rejects caller-injected assistant role',async()=>{expect((await messagesPost(req({message:'hello',role:'assistant'}),ctx)).status).toBe(400);expect(m.append).not.toHaveBeenCalled();});
- it('halts at the token cap before storing or calling the model',async()=>{m.cap.mockRejectedValue(new UsageCapExceededError('design_tokens',750000,750000));const r=await messagesPost(req({message:'hello'}),ctx);expect(r.status).toBe(429);expect((await r.json()).error).toBe('USAGE_CAP_EXCEEDED');expect(m.reply).not.toHaveBeenCalled();expect(m.append).not.toHaveBeenCalled();});
- it('still accepts an ordinary customer message',async()=>{expect((await messagesPost(req({message:'hello'}),ctx)).status).toBe(200);expect(m.append).toHaveBeenCalledWith(expect.any(String),'customer','hello',false);});
+ it('v3 refuses a bare negative and asks for the None button',async()=>{ix.mode='v3';ix.sql=[];const r=await messagesPost(req({message:'n/a'}),ctx);ix.mode='legacy';expect(r.status).toBe(400);expect(await r.json()).toEqual({error:'USE_NONE_BUTTON'});expect(ix.sql).toHaveLength(0);});
+ it('still accepts an ordinary customer message',async()=>{ix.sql=[];expect((await messagesPost(req({message:'hello'}),ctx)).status).toBe(200);expect(ix.sql.some(q=>q.includes("'customer'"))).toBe(true);});
  it('sanitizes summary read failures',async()=>{m.summary.mockRejectedValue(new Error(detail));const r=await summaryGet(new Request('http://localhost'),ctx);expect(r.status).toBe(500);expect(await r.json()).toEqual({error:'DESIGN_SUMMARY_READ_FAILED'});});
  it('handles summary-write authentication before any mutation',async()=>{m.project.mockRejectedValue(new Error('UNAUTHENTICATED'));expect((await summaryPost(req({action:'approve'}),ctx)).status).toBe(401);expect(m.approve).not.toHaveBeenCalled();});
  it('sanitizes summary-write failures',async()=>{m.approve.mockRejectedValue(new Error(detail));const r=await summaryPost(req({action:'approve'}),ctx);expect(r.status).toBe(500);expect(await r.json()).toEqual({error:'DESIGN_SUMMARY_UPDATE_FAILED'});});

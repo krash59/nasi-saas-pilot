@@ -5,13 +5,9 @@ import {
   getOrCreateSummary,
   getProjectForCustomer,
   getProjectStageInfo,
-  listDesignMessages,
-  mergeAiProposedFields,
 } from "@/lib/design/repository";
-import { historyForAssistant } from "@/lib/design/history";
-import { draftSummaryFromConversation, getDesignAssistantMode } from "@/lib/design/openai";
-import { assertDesignTokensAvailable, recordProjectUsage } from "@/lib/usage/repository";
-import { UsageCapExceededError } from "@/lib/usage/meters";
+import { intakeModeTx, withIntake } from "@/lib/intake/repository";
+import { renderSummaryFields } from "@/lib/intake/project";
 import { SUMMARY_FIELD_KEYS, type SummaryFieldKey } from "@/lib/design/summary-fields";
 import { denyAgenticWithoutApprovedSummary } from "@/lib/design/stage-gate";
 import { z } from "zod";
@@ -51,7 +47,6 @@ const confirmSchema = z.object({
 }).strict();
 
 const approveSchema = z.object({ action: z.literal("approve") }).strict();
-const fillSchema = z.object({ action: z.literal("fill_from_chat") }).strict();
 
 export async function POST(req: Request, ctx: Ctx) {
   try {
@@ -63,6 +58,16 @@ export async function POST(req: Request, ctx: Ctx) {
     const action = z.object({ action: z.string() }).passthrough().parse(body).action;
     if (action === "approve") {
       approveSchema.parse(body);
+      // Intake v3: the deterministic gate must pass; the six fields are then written from the customer's words by a fixed
+      // template (no AI), so the existing approval, DIR, stories and NWS handoff consume exactly the confirmed record.
+      const intake = await withIntake(projectId, async (tx, _c, view) => ({ mode: await intakeModeTx(tx, projectId), view }));
+      if (intake.mode === "v3") {
+        if (!intake.view.gate.pass) {
+          return NextResponse.json({ error: "INTAKE_GATE_FAILED", issues: intake.view.gate.issues }, { status: 409 });
+        }
+        const rendered = renderSummaryFields(intake.view);
+        for (const key of SUMMARY_FIELD_KEYS) await confirmSummaryField(projectId, key, rendered[key], null);
+      }
       const result = await approveDesignSummary(projectId);
       try {
         const draft = await generateDirDraft(projectId);
@@ -73,19 +78,8 @@ export async function POST(req: Request, ctx: Ctx) {
         return NextResponse.json({ ...result, dir_error: "DIR_GENERATION_FAILED_RETRY" });
       }
     }
-    if (action === "fill_from_chat") {
-      // AI drafts for every unconfirmed area from the whole conversation; confirmed text is never touched.
-      fillSchema.parse(body);
-      const summary = (await getOrCreateSummary(projectId)) as { status?: string };
-      if (summary.status === "approved") throw new Error("SUMMARY_ALREADY_APPROVED");
-      await assertDesignTokensAvailable();
-      const rows = await listDesignMessages(projectId);
-      const history = historyForAssistant(rows as { role: string; content: string; withdrawn_at?: unknown }[]);
-      const { proposals, tokensUsed } = await draftSummaryFromConversation(history);
-      if (tokensUsed > 0) await recordProjectUsage(projectId, "design_tokens", tokensUsed, `summary_fill:${getDesignAssistantMode()}`);
-      const fields = await mergeAiProposedFields(projectId, proposals);
-      return NextResponse.json({ fields, filled: Object.keys(proposals) });
-    }
+    const mode = await withIntake(projectId, (tx) => intakeModeTx(tx, projectId));
+    if (mode === "v3") return NextResponse.json({ error: "USE_INTAKE_ACTIONS" }, { status: 409 });
     const parsed = confirmSchema.parse(body);
     const fields = await confirmSummaryField(
       projectId,
@@ -95,16 +89,10 @@ export async function POST(req: Request, ctx: Ctx) {
     );
     return NextResponse.json({ fields });
   } catch (e) {
-    if (e instanceof UsageCapExceededError) {
-      return NextResponse.json({ error: "USAGE_CAP_EXCEEDED", meter: e.meter, used: e.used, limit: e.limit }, { status: 429 });
-    }
     const msg = e instanceof Error ? e.message : "";
     if (msg === "UNAUTHENTICATED") return NextResponse.json({ error: msg }, { status: 401 });
     if (e instanceof z.ZodError || e instanceof SyntaxError) {
       return NextResponse.json({ error: "INVALID_SUMMARY_REQUEST" }, { status: 400 });
-    }
-    if (msg.includes("OPENAI") || msg.startsWith("OpenAI error") || msg === "Empty model response") {
-      return NextResponse.json({ error: "DESIGN_ASSISTANT_UNAVAILABLE" }, { status: 503 });
     }
     if (["FIELDS_NOT_CONFIRMED", "SUMMARY_NOT_FOUND", "SUMMARY_ALREADY_APPROVED"].includes(msg)) {
       return NextResponse.json({ error: msg }, { status: 400 });

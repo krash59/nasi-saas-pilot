@@ -1,3 +1,4 @@
+import { projectIntake, renderDirExtras, type IntakeEvent } from "@/lib/intake/project";
 import { getSql, withCustomerContext } from "@/lib/db/client";
 import { requireCustomer } from "@/lib/tenant/customer";
 import { buildDirDraft } from "./dir-draft";
@@ -20,7 +21,14 @@ export async function generateDirDraft(projectId: string) {
       WHERE p.id = ${projectId}::uuid AND p.customer_id = ${customer.id}::uuid`;
     if (!rows.length) throw new Error("DESIGN_SUMMARY_NOT_APPROVED");
     const summary = rows[0] as { fields: SummaryFields; status: string; approved_at: unknown };
-    const content = buildDirDraft(summary);
+    // Intake v3: add the customer's original description and decisions (fixed templates; the summary is approved, so the
+    // event log is closed and the same log always gives the same DIR).
+    const evRows = await tx`SELECT seq, event_type, question_id, message_id, item_id, verbatim_text, status
+      FROM intake_events WHERE project_id = ${projectId}::uuid ORDER BY seq ASC`;
+    const extras = evRows.length
+      ? renderDirExtras(projectIntake((evRows as unknown as IntakeEvent[]).map((r) => ({ ...r, message_id: r.message_id ? String(r.message_id) : null }))))
+      : [];
+    const content = buildDirDraft(summary, extras);
     // Insertion and stage transition commit together. A retry preserves the original draft.
     const result = await tx`WITH draft AS (
       INSERT INTO dir_drafts (project_id, customer_id, content, source_summary, source_approved_at, generated_by)

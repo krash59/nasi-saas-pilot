@@ -8,7 +8,7 @@ import {resolve} from 'node:path';
 const url=process.env.NASI_ISOLATED_TEST_DATABASE_URL;
 const A='00000000-0000-4000-8000-0000000000a1',PA='00000000-0000-4000-8000-0000000000b1';
 const TABLES=['security_audit_events','usage_meter_events','break_glass_access_log','operator_mfa_log','retention_purge_runs',
- 'customer_release_authorizations','platform_production_authorizations','production_deploy_decisions','design_message_revisions','design_versions'];
+ 'customer_release_authorizations','platform_production_authorizations','production_deploy_decisions','design_message_revisions','design_versions','intake_events','ai_suggestions'];
 describe.skipIf(!url)('FA-07 append-only audit tables (real PostgreSQL)',()=>{
  let admin:Client;let purge:Client;let app:Client;
  beforeAll(async()=>{

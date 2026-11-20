@@ -93,16 +93,12 @@ describe.skipIf(!url)('WIP limit and usage caps (real PostgreSQL, least-privileg
  });
 
  describe('BDD_F10_02 halt generative and agentic calls at the cap',()=>{
-  it('GPT halted at token cap: API returns cap exceeded and no model call is made',async()=>{
+  it('design chat is deterministic: no model call and no token metering, even at the cap',async()=>{
    await recordProjectUsage(P,'design_tokens',BETA_CAPS.design_tokens.limit,'test');
    const res=await send('hello');
-   expect(res.status).toBe(429);expect((await res.json()).error).toBe('USAGE_CAP_EXCEEDED');
+   expect(res.status).toBe(200);
    expect(ai.calls).toBe(0);
-   expect((await admin.query('SELECT count(*)::int AS n FROM design_messages')).rows[0].n).toBe(0);
-  });
-  it('meters the tokens of an allowed design chat call',async()=>{
-   const res=await send('hello');expect(res.status).toBe(200);expect(ai.calls).toBe(1);
-   expect((await getUsageForProject(P)).find(m=>m.meter==='design_tokens')?.used).toBe(1234);
+   expect((await getUsageForProject(P)).find(m=>m.meter==='design_tokens')?.used).toBe(BETA_CAPS.design_tokens.limit);
   });
   it('halts agentic and deploy steps at their per-project caps',async()=>{
    await recordProjectUsage(P,'agent_minutes',180,'test');await recordProjectUsage(P,'production_deploys',3,'test');

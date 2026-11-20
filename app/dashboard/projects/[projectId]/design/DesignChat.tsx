@@ -3,6 +3,8 @@
 import { SCAFFOLD_LABELS, getNextScaffoldFocus } from "@/lib/design/scaffolding";
 import { formatTranscript, transcriptFileName } from "@/lib/design/transcript";
 import type { SummaryFields } from "@/lib/design/summary-fields";
+import type { IntakeView } from "@/lib/intake/project";
+import { QUESTIONS } from "@/lib/intake/protocol";
 import { useEffect, useState } from "react";
 import { useAuthenticatedApiFetch } from "@/lib/providers/use-authenticated-api-fetch";
 
@@ -14,6 +16,7 @@ export function DesignChat({ projectId }: { projectId: string }) {
   const [chatOpen, setChatOpen] = useState(true);
   const [editing, setEditing] = useState<{ id: string; text: string } | null>(null);
   const [fields, setFields] = useState<SummaryFields | null>(null);
+  const [intake, setIntake] = useState<{ mode: "v3" | "legacy"; view: IntakeView } | null>(null);
   const [assistantMode, setAssistantMode] = useState<"openai" | "local_stub">("openai");
   const [input, setInput] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -30,6 +33,7 @@ export function DesignChat({ projectId }: { projectId: string }) {
     setMessages(d.messages ?? []);
     if (d.assistantMode) setAssistantMode(d.assistantMode);
     if (d.fields) setFields(d.fields);
+    if (d.intake) setIntake(d.intake);
     if (typeof d.projectName === "string") setProjectName(d.projectName);
     if (typeof d.chatOpen === "boolean") setChatOpen(d.chatOpen);
   }
@@ -78,19 +82,37 @@ export function DesignChat({ projectId }: { projectId: string }) {
     const res = await apiFetch(`/api/projects/${projectId}/design/messages`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message: input }),
+      body: JSON.stringify({ message: input, ...(intake?.mode === "v3" && intake.view.active_question_id ? { question_id: intake.view.active_question_id } : {}) }),
     });
     const data = await res.json();
     setLoading(false);
     if (!res.ok) {
-      setError(data.error ?? "Send failed");
+      setError(data.error === "USE_NONE_BUTTON" ? 'A bare "no" or "n/a" is not saved as an answer. Press "None / not applicable" instead, or write a full answer.'
+        : data.error === "QUESTION_CHANGED_RELOAD" ? "The question changed since you started typing (perhaps in another tab). Your text was not saved; please check the current question and send again."
+        : data.error === "INTAKE_COMPLETE_USE_SUMMARY_PAGE" ? "All questions are answered. Use the Design Summary page to change or add anything."
+        : data.error ?? "Send failed");
       return;
     }
     setMessages(data.messages ?? []);
     if (data.assistantMode) setAssistantMode(data.assistantMode);
     if (data.fields) setFields(data.fields);
+    if (data.intake) setIntake(data.intake);
     setInput("");
   }
+
+  async function intakeAction(body: Record<string, string>) {
+    setError(null);
+    const res = await apiFetch(`/api/projects/${projectId}/intake`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+    });
+    const data = await res.json();
+    if (!res.ok) { setError(data.error ?? "Action failed"); return; }
+    await loadConversation();
+  }
+  const v3 = intake?.mode === "v3" ? intake.view : null;
+  const activeQ = v3?.active_question_id ? v3.questions.find((q) => q.id === v3.active_question_id) ?? null : null;
+  const savedTo = new Map<string, string>();
+  for (const q of v3?.questions ?? []) for (const a of q.answers) if (a.message_id) savedTo.set(a.message_id, q.heading);
 
   return (
     <div>
@@ -105,7 +127,18 @@ export function DesignChat({ projectId }: { projectId: string }) {
       {assistantMode === "local_stub" && (
         <p role="status">Local offline assistant is active. Replies are deterministic test drafts.</p>
       )}
-      {focus && (
+      {v3 && chatOpen && (
+        <div role="region" aria-label="Current question" style={{ border: "1px solid #888", padding: "0.5rem", marginBottom: "0.5rem" }}>
+          {activeQ ? <>
+            <div style={{ fontSize: 13 }}>Question {QUESTIONS.findIndex((q) => q.id === activeQ.id) + 1} of {QUESTIONS.length}: <strong>{activeQ.heading}</strong></div>
+            <div>{activeQ.text}</div>
+            <div style={{ fontSize: 13, marginTop: 4 }}>Everything you type is saved word for word under this question until you press Next.</div>
+            <button type="button" disabled={activeQ.state !== "answered"} onClick={() => intakeAction({ action: "next", question_id: activeQ.id })}>Next question</button>{" "}
+            <button type="button" disabled={activeQ.state === "answered"} onClick={() => intakeAction({ action: "none", question_id: activeQ.id })}>None / not applicable</button>
+          </> : <div>All questions are answered. <a href={`/dashboard/projects/${projectId}/summary`}>Check your answers on the Design Summary page.</a></div>}
+        </div>
+      )}
+      {!v3 && focus && (
         <p style={{ fontSize: 14, color: "#444" }}>
           Guided focus: <strong>{SCAFFOLD_LABELS[focus]}</strong> — saved as you chat; confirm on
           the summary page.
@@ -114,7 +147,15 @@ export function DesignChat({ projectId }: { projectId: string }) {
       <div style={{ border: "1px solid #ccc", padding: "1rem", minHeight: 240 }}>
         {messages.map((m, i) => (
           <div key={i} style={{ marginBottom: "0.75rem" }}>
-            <strong>{m.role === "assistant" ? (assistantMode === "local_stub" ? "Local assistant (draft)" : "AI (draft)") : "You"}</strong>
+            <strong>{m.role === "assistant" ? (m.is_ai_draft ? (assistantMode === "local_stub" ? "Local assistant (draft)" : "AI (draft)") : "NASI") : "You"}</strong>
+            {m.role === "customer" && m.id && savedTo.has(m.id) && !m.withdrawn_at && (
+              <span style={{ fontSize: 12, marginLeft: 8 }}>Saved to: {savedTo.get(m.id)}{chatOpen && <>{" "}
+                <select aria-label="Move this answer to another question" value="" onChange={(e) => e.target.value && intakeAction({ action: "move", message_id: m.id!, to_question_id: e.target.value })}>
+                  <option value="">Move to…</option>
+                  {QUESTIONS.filter((q) => q.heading !== savedTo.get(m.id!)).map((q) => <option key={q.id} value={q.id}>{q.heading}</option>)}
+                </select></>}
+              </span>
+            )}
             {m.is_ai_draft && m.role === "assistant" && (
               <span style={{ fontSize: 12, marginLeft: 8 }}>AI_DRAFT</span>
             )}

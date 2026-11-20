@@ -57,6 +57,8 @@ export async function reviseDesignMessage(
   projectId: string,
   messageId: string,
   change: { action: "edit"; content: string } | { action: "withdraw" },
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  onRevised?: (tx: any, customerId: string) => Promise<void>,
 ) {
   const customer = await requireCustomer();
   const sql = getSql(process.env.DATABASE_URL!);
@@ -82,6 +84,7 @@ export async function reviseDesignMessage(
     } else {
       await tx`UPDATE design_messages SET withdrawn_at = now() WHERE id = ${messageId}::uuid`;
     }
+    if (onRevised) await onRevised(tx, customer.id);
     return listDesignMessagesTx(tx, projectId);
   });
 }
