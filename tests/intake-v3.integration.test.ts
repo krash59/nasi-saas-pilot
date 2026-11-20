@@ -12,6 +12,7 @@ import { POST as summaryPost } from "@/app/api/projects/[projectId]/design/summa
 import { getDirDraft } from "@/lib/design/dir-repository";
 import { QUESTIONS } from "@/lib/intake/protocol";
 import { closePgPools } from "@/lib/db/pg-sql";
+import { reviseDesign, listDesignVersions } from "@/lib/design/versions";
 
 const url = process.env.NASI_ISOLATED_TEST_DATABASE_URL;
 const A = "00000000-0000-4000-8000-000000000001", B = "00000000-0000-4000-8000-000000000002";
@@ -72,7 +73,8 @@ describe.skipIf(!url)("Intake v3 (real PostgreSQL, app role, RLS)", () => {
     expect(by.original_description).toBe(ANSWERS.q01_original_description);
     expect(by.must_have_features).toBe(ANSWERS.q04_must_haves);
     expect(by.constraints).toContain("Privacy and security:\nTicket data must not train public models");
-    expect(by.open_questions).toMatch(/^None open/);
+    expect(by.open_questions.startsWith(ANSWERS.q11_open_questions)).toBe(true);
+    expect(by.open_questions).toContain("Live order status?: settled (see Decisions)");
     expect(by.decisions).toContain("Decision: We decided: Live order status?");
     const ev = await admin.query("SELECT DISTINCT actor FROM intake_events");
     expect(ev.rows).toEqual([{ actor: "customer" }]);
@@ -136,5 +138,33 @@ describe.skipIf(!url)("Intake v3 (real PostgreSQL, app role, RLS)", () => {
     await app.query("BEGIN"); await app.query("SELECT set_config('app.current_customer_id',$1,true)", [B]);
     expect((await app.query("SELECT count(*)::int AS n FROM intake_events")).rows[0].n).toBe(0);
     await app.query("ROLLBACK");
+  });
+
+  it("C12: version 2 change is stored against that question; version 1 stays unchanged; DIR v2 shows the change", async () => {
+    await walk(P1);
+    expect((await summaryPost(post({ action: "approve" }), ctx(P1))).status).toBe(200);
+    await reviseDesign(P1);
+    const ch = await intake(P1, { action: "change", question_id: "q04_must_haves", text: "* Classify topic\n* Alert Slack\n* Weekly report" });
+    expect(ch.status).toBe(200);
+    expect(ch.json.view.questions.find((q: { id: string }) => q.id === "q04_must_haves").confirmation).toBe("needs_recheck");
+    const ev = await admin.query("SELECT event_type, question_id FROM intake_events WHERE project_id=$1 ORDER BY seq DESC LIMIT 1", [P1]);
+    expect(ev.rows[0]).toEqual({ event_type: "AnswerReplaced", question_id: "q04_must_haves" });
+    expect((await summaryPost(post({ action: "approve" }), ctx(P1))).status).toBe(409);
+    await intake(P1, { action: "confirm", question_id: "q04_must_haves" });
+    expect((await summaryPost(post({ action: "approve" }), ctx(P1))).status).toBe(200);
+    const v2 = await getDirDraft(P1) as { content: { sections: { key: string; content: string }[] } };
+    expect(v2.content.sections.find((s) => s.key === "must_have_features")!.content).toContain("Weekly report");
+    const archived = (await listDesignVersions(P1)).versions as unknown as { version: number; dir: unknown }[];
+    const v1 = archived.find((x) => x.version === 1)!;
+    expect(JSON.stringify(v1.dir)).not.toContain("Weekly report");
+    expect(JSON.stringify(v1.dir)).toContain("Alert Slack on urgent tickets");
+  });
+
+  it("C13: a message over 8,000 characters is refused at send; nothing is stored or cut", async () => {
+    const r = await messagePost(post({ message: "x".repeat(8001), question_id: "q01_original_description" }), ctx(P1));
+    expect(r.status).toBe(400);
+    const n = await admin.query("SELECT count(*)::int AS n FROM design_messages WHERE project_id=$1 AND role='customer'", [P1]);
+    expect(n.rows[0].n).toBe(0);
+    expect((await intake(P1, { action: "change", question_id: "q02_problem", text: "y".repeat(8001) })).status).toBe(400);
   });
 });
